@@ -1,12 +1,18 @@
-# A1_SDK_SC235HAI
+# A1 SDK SC235HAI
 
-## A1 开发板 sdk 支持图像传感器 SC235HAI
-### smartsens_sdk SC235HAI 赛题
-编译脚本 a1_sc235hai_build.sh 对应使用 sc235hai 图像传感器的赛题。
-编译方法:
-```
-cd smartsens_sdk
+## A1 开发板 SDK，支持 SC235HAI 图像传感器
+
+本仓库为 Smartsens A1 / M1Pro 相关 SDK 工程副本，当前版本面向使用 SC235HAI 图像传感器的赛题工程。
+
+### 编译方法
+
+```bash
+cd smartsens_sdk_new
 ./scripts/a1_sc235hai_build.sh
 ```
-编译后的产物: output/images/zImage.smartsens-m1-evb
 
+### 编译产物
+
+```text
+smartsens_sdk_new/output/images/zImage.smartsens-m1-evb
+```
