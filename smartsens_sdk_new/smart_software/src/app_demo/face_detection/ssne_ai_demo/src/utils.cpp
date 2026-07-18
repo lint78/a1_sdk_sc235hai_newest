@@ -12,16 +12,14 @@
 #include <iomanip>
 #include <cmath>
 #include <cstdio>
+#include <sys/stat.h>
+#include <utility>
 
 namespace utils {
 
 /**
- * @brief 归并排序的合并操作
- * @param result 人脸/目标检测结果结构体指针
- * @param low 合并区间的起始索引
- * @param mid 合并区间的中间索引
- * @param high 合并区间的结束索引
- * @description 将两个已排序的子数组合并成一个有序数组，按照分数从高到低排序
+ * @brief 归并排序的合并操�? * @param result 人脸/目标检测结果结构体指针
+ * @param low 合并区间的起始索�? * @param mid 合并区间的中间索�? * @param high 合并区间的结束索�? * @description 将两个已排序的子数组合并成一个有序数组，按照分数从高到低排序
  */
 void Merge(FaceDetectionResult* result, size_t low, size_t mid, size_t high) {
   std::vector<PoseDetection>& detections = result->detections;
@@ -82,9 +80,7 @@ void Merge(FaceDetectionResult* result, size_t low, size_t mid, size_t high) {
 /**
  * @brief 归并排序递归函数
  * @param result 检测结果结构体指针
- * @param low 排序区间的起始索引
- * @param high 排序区间的结束索引
- */
+ * @param low 排序区间的起始索�? * @param high 排序区间的结束索�? */
 void MergeSort(FaceDetectionResult* result, size_t low, size_t high) {
   if (low < high) {
     size_t mid = (high - low) / 2 + low;
@@ -95,10 +91,8 @@ void MergeSort(FaceDetectionResult* result, size_t low, size_t high) {
 }
 
 /**
- * @brief 对检测结果进行排序
- * @param result 检测结果结构体指针
- * @description 按照检测分数从高到低对检测结果进行排序
- */
+ * @brief 对检测结果进行排�? * @param result 检测结果结构体指针
+ * @description 按照检测分数从高到低对检测结果进行排�? */
 void SortDetectionResult(FaceDetectionResult* result) {
   size_t low = 0;
   size_t high = result->scores.size();
@@ -110,15 +104,10 @@ void SortDetectionResult(FaceDetectionResult* result) {
 }
 
 /**
- * @brief 非极大值抑制（NMS）算法
- * @param result 检测结果结构体指针
- * @param iou_threshold IoU阈值
- * @param top_k 保留前k个检测结果
- *
+ * @brief 非极大值抑制（NMS）算�? * @param result 检测结果结构体指针
+ * @param iou_threshold IoU阈�? * @param top_k 保留前k个检测结�? *
  * @note
- * 这版保留了 class_ids 的同步处理。
- * 这个函数即使暂时不用，但是保留可编译状态。
- */
+ * 这版保留�?class_ids 的同步处理�? * 这个函数即使暂时不用，但是保留可编译状态�? */
 void NMS(FaceDetectionResult* result, float iou_threshold, int top_k) {
   SortDetectionResult(result);
 
@@ -186,9 +175,7 @@ void NMS(FaceDetectionResult* result, float iou_threshold, int top_k) {
 
 
 /**
- * @brief 释放 FaceDetectionResult 的内存
- * @description 使用 swap 技巧释放 vector 占用的内存
- */
+ * @brief 释放 FaceDetectionResult 的内�? * @description 使用 swap 技巧释�?vector 占用的内�? */
 void FaceDetectionResult::Free() {
   std::vector<PoseDetection>().swap(detections);
   std::vector<std::array<float, 4>>().swap(boxes);
@@ -198,9 +185,7 @@ void FaceDetectionResult::Free() {
 }
 
 /**
- * @brief 清空 FaceDetectionResult 的内容
- * @description 清空所有检测框、分数、类别和关键点，但保留内存分配
- */
+ * @brief 清空 FaceDetectionResult 的内�? * @description 清空所有检测框、分数、类别和关键点，但保留内存分�? */
 void FaceDetectionResult::Clear() {
   detections.clear();
   boxes.clear();
@@ -210,8 +195,7 @@ void FaceDetectionResult::Clear() {
 }
 
 /**
- * @brief 预分配内存空间
- * @param size 要保留的元素数量
+ * @brief 预分配内存空�? * @param size 要保留的元素数量
  */
 void FaceDetectionResult::Reserve(int size) {
   detections.reserve(size);
@@ -222,8 +206,7 @@ void FaceDetectionResult::Reserve(int size) {
 }
 
 /**
- * @brief 调整 FaceDetectionResult 的大小
- * @param size 新的元素数量
+ * @brief 调整 FaceDetectionResult 的大�? * @param size 新的元素数量
  */
 void FaceDetectionResult::Resize(int size) {
   detections.resize(size);
@@ -234,8 +217,7 @@ void FaceDetectionResult::Resize(int size) {
 }
 
 /**
- * @brief FaceDetectionResult 的拷贝构造函数
- * @param res 要拷贝的 FaceDetectionResult 对象
+ * @brief FaceDetectionResult 的拷贝构造函�? * @param res 要拷贝的 FaceDetectionResult 对象
  */
 FaceDetectionResult::FaceDetectionResult(const FaceDetectionResult& res) {
   detections.assign(res.detections.begin(), res.detections.end());
@@ -289,7 +271,16 @@ constexpr int kCenterColor = 4;
 constexpr int kPointColor = 5;
 constexpr int kWarnColor = kLeftColor;
 constexpr int kAlertColor = kWarnColor;
+constexpr int kSnakeBodyColor = kBoxColor;
+constexpr int kSnakeHeadColor = kCenterColor;
+constexpr int kSnakeFoodColor = kPointColor;
+constexpr int kSnakeBoardColor = kRightColor;
 constexpr float kSkeletonLineThickness = 2.0f;
+constexpr int kSnakeBitmapLayerId = 2;
+constexpr int kSnakeGraphicLayerId = 1;
+constexpr int kSnakeSpriteCanvasSize = 48;
+constexpr int kDesignWidth = 1920;
+constexpr int kDesignHeight = 1080;
 constexpr int kClassCat = 0;
 constexpr int kClassDog = 1;
 constexpr int kClassSnake = 2;
@@ -326,15 +317,13 @@ int GetSkeletonColorIndex(int a, int b) {
 }
 
 bool IsAlertClass(int class_id) {
-    // 只有蛇、鼠和火焰属于业务告警；猫狗只画普通检测框，不显示左上角叹号。
     return class_id == kClassMouse ||
            class_id == kClassSnake ||
            class_id == kClassFire;
 }
 
 int GetDetectionColorIndex(const ObjectDetection& det) {
-    // 告警类固定红框；普通目标按置信度区分绿框和黄框。
-    if (IsAlertClass(det.class_id)) {
+        if (IsAlertClass(det.class_id)) {
         return kAlertColor;
     }
     return det.score >= kGreenScoreThreshold ? kBoxColor : kWarnColor;
@@ -419,7 +408,6 @@ void AppendWarningIconCovers(const std::array<float, 4>& box,
         return;
     }
 
-    // 用简单 cover 拼出“!”图标，避免额外加载位图资源占用 OSD 图层和内存。
     const float left = std::max(0.0f, box[0] - 34.0f);
     const float top = std::max(0.0f, box[1] - 34.0f);
     const float size = 28.0f;
@@ -430,25 +418,240 @@ void AppendWarningIconCovers(const std::array<float, 4>& box,
     covers->emplace_back(MakeSolidRectCover(cx - 3.0f, top + 21.0f, cx + 3.0f, top + 26.0f, kPointColor));
 }
 
+int ScaleDesignX(int width, float x) {
+    return static_cast<int>(std::round(x * static_cast<float>(width) /
+                                       static_cast<float>(kDesignWidth)));
+}
+
+int ScaleDesignY(int height, float y) {
+    return static_cast<int>(std::round(y * static_cast<float>(height) /
+                                       static_cast<float>(kDesignHeight)));
+}
+
+std::string ResolveAppAssetPath(const std::string& asset_path) {
+    if (asset_path.empty()) {
+        return std::string();
+    }
+    if (asset_path[0] == '/') {
+        return asset_path;
+    }
+    return std::string("/app_demo/app_assets/") + asset_path;
+}
+
+bool FileExists(const std::string& path, long* size_bytes = nullptr) {
+    if (path.empty()) {
+        return false;
+    }
+    struct stat file_stat;
+    if (stat(path.c_str(), &file_stat) != 0) {
+        return false;
+    }
+    if (size_bytes != nullptr) {
+        *size_bytes = static_cast<long>(file_stat.st_size);
+    }
+    return file_stat.st_size > 0;
+}
+
+std::string SnakeAsset(const std::string& relative_path) {
+    return std::string("ui/snake/") + relative_path;
+}
+
+std::string DigitBitmapPath(int digit) {
+    const int clamped_digit = std::max(0, std::min(9, digit));
+    return SnakeAsset("digits/digit_" + std::to_string(clamped_digit) + ".ssbmp");
+}
+
+std::string GestureBitmapPath(GestureCommand command) {
+    switch (command) {
+        case GestureCommand::TU:
+            return SnakeAsset("gestures/gesture_up.ssbmp");
+        case GestureCommand::TD:
+            return SnakeAsset("gestures/gesture_down.ssbmp");
+        case GestureCommand::TL:
+            return SnakeAsset("gestures/gesture_left.ssbmp");
+        case GestureCommand::TR:
+            return SnakeAsset("gestures/gesture_right.ssbmp");
+        case GestureCommand::NONE:
+        default:
+            return std::string();
+    }
+}
+
+int ClampSpriteX(float x, float board_left, float board_width) {
+    const int min_x = static_cast<int>(std::round(board_left));
+    const int max_x = static_cast<int>(std::round(board_left + board_width)) - kSnakeSpriteCanvasSize;
+    return std::max(min_x, std::min(max_x, static_cast<int>(std::round(x))));
+}
+
+int ClampSpriteY(float y, float board_top, float board_height) {
+    const int min_y = static_cast<int>(std::round(board_top));
+    const int max_y = static_cast<int>(std::round(board_top + board_height)) - kSnakeSpriteCanvasSize;
+    return std::max(min_y, std::min(max_y, static_cast<int>(std::round(y))));
+}
+
+fdevice::COVER_ATTR_S MakeSnakeCellCover(const SnakeCell& cell,
+                                         float board_left,
+                                         float board_top,
+                                         float cell_w,
+                                         float cell_h,
+                                         int color) {
+    const float inset = std::max(2.0f, std::min(cell_w, cell_h) * 0.12f);
+    const float left = board_left + static_cast<float>(cell.x) * cell_w + inset;
+    const float top = board_top + static_cast<float>(cell.y) * cell_h + inset;
+    const float right = board_left + static_cast<float>(cell.x + 1) * cell_w - inset;
+    const float bottom = board_top + static_cast<float>(cell.y + 1) * cell_h - inset;
+    return MakeSolidRectCover(left, top, right, bottom, color);
+}
+
+std::array<bool, 7> DigitSegments(int digit) {
+    switch (digit) {
+        case 0: return {{true, true, true, true, true, true, false}};
+        case 1: return {{false, true, true, false, false, false, false}};
+        case 2: return {{true, true, false, true, true, false, true}};
+        case 3: return {{true, true, true, true, false, false, true}};
+        case 4: return {{false, true, true, false, false, true, true}};
+        case 5: return {{true, false, true, true, false, true, true}};
+        case 6: return {{true, false, true, true, true, true, true}};
+        case 7: return {{true, true, true, false, false, false, false}};
+        case 8: return {{true, true, true, true, true, true, true}};
+        case 9: return {{true, true, true, true, false, true, true}};
+        default: return {{false, false, false, false, false, false, false}};
+    }
+}
+
+void AppendSevenSegmentDigit(std::vector<fdevice::COVER_ATTR_S>* covers,
+                             int digit,
+                             float left,
+                             float top,
+                             float scale,
+                             int color) {
+    if (covers == nullptr) {
+        return;
+    }
+
+    const std::array<bool, 7> seg = DigitSegments(digit);
+    const float w = 28.0f * scale;
+    const float h = 50.0f * scale;
+    const float t = std::max(3.0f, 5.0f * scale);
+    const float mid = top + h * 0.5f;
+    const float bottom = top + h;
+
+    if (seg[0]) covers->emplace_back(MakeSolidRectCover(left + t, top, left + w - t, top + t, color));
+    if (seg[1]) covers->emplace_back(MakeSolidRectCover(left + w - t, top + t, left + w, mid - t * 0.5f, color));
+    if (seg[2]) covers->emplace_back(MakeSolidRectCover(left + w - t, mid + t * 0.5f, left + w, bottom - t, color));
+    if (seg[3]) covers->emplace_back(MakeSolidRectCover(left + t, bottom - t, left + w - t, bottom, color));
+    if (seg[4]) covers->emplace_back(MakeSolidRectCover(left, mid + t * 0.5f, left + t, bottom - t, color));
+    if (seg[5]) covers->emplace_back(MakeSolidRectCover(left, top + t, left + t, mid - t * 0.5f, color));
+    if (seg[6]) covers->emplace_back(MakeSolidRectCover(left + t, mid - t * 0.5f, left + w - t, mid + t * 0.5f, color));
+}
+
+void AppendGraphicNumber(std::vector<fdevice::COVER_ATTR_S>* covers,
+                         int value,
+                         float right_x,
+                         float top_y,
+                         float scale,
+                         int color) {
+    if (covers == nullptr) {
+        return;
+    }
+
+    const std::string text = std::to_string(std::max(0, value));
+    const float spacing = 34.0f * scale;
+    const float start_x = right_x - static_cast<float>(text.size()) * spacing;
+    for (size_t i = 0; i < text.size(); ++i) {
+        AppendSevenSegmentDigit(covers,
+                                text[i] - '0',
+                                start_x + static_cast<float>(i) * spacing,
+                                top_y,
+                                scale,
+                                color);
+    }
+}
+std::string SnakeStateBitmapPath(const SnakeRenderData& game) {
+    if (game.game_over) {
+        return SnakeAsset("states/state_game_over.ssbmp");
+    }
+    if (game.paused) {
+        return SnakeAsset("states/state_paused.ssbmp");
+    }
+    if (game.score == 0 && game.last_command == GestureCommand::NONE) {
+        return SnakeAsset("states/state_ready.ssbmp");
+    }
+    return SnakeAsset("states/state_playing.ssbmp");
+}
+
+bool IsStraightSegment(const SnakeCell& prev, const SnakeCell& next) {
+    return prev.x == next.x || prev.y == next.y;
+}
+
+std::string SnakeSegmentBitmapPath(const SnakeRenderData& game, size_t index) {
+    if (index >= game.snake.size()) {
+        return std::string();
+    }
+    if (index == 0) {
+        return SnakeAsset("snake/snake_head.ssbmp");
+    }
+    if (index + 1 == game.snake.size()) {
+        return SnakeAsset("snake/snake_tail.ssbmp");
+    }
+    const SnakeCell& prev = game.snake[index - 1];
+    const SnakeCell& next = game.snake[index + 1];
+    return IsStraightSegment(prev, next) ?
+        SnakeAsset("snake/snake_body.ssbmp") :
+        SnakeAsset("snake/snake_corner.ssbmp");
+}
+
+void DrawNumberBitmaps(VISUALIZER* visualizer,
+                       int value,
+                       int right_x,
+                       int top_y,
+                       int spacing) {
+    if (visualizer == nullptr) {
+        return;
+    }
+
+    const std::string text = std::to_string(std::max(0, value));
+    const int start_x = right_x - static_cast<int>(text.size()) * spacing;
+    for (size_t i = 0; i < text.size(); ++i) {
+        const int digit = text[i] - '0';
+        visualizer->DrawBitmap(DigitBitmapPath(digit),
+                               "",
+                               start_x + static_cast<int>(i) * spacing,
+                               top_y,
+                               kSnakeBitmapLayerId,
+                               false);
+    }
+}
+
 }  // namespace
 
 
 /**
- * @brief OSD 可视化器初始化函数
- * @param in_img_shape 图像尺寸 [宽度, 高度]
+ * @brief OSD 可视化器初始化函�? * @param in_img_shape 图像尺寸 [宽度, 高度]
  */
 void VISUALIZER::Initialize(std::array<int, 2>& in_img_shape, const std::string& bitmap_lut_path) {
+    m_width = in_img_shape[0];
+    m_height = in_img_shape[1];
     if (bitmap_lut_path.empty()) {
+        m_bitmap_lut_path_full.clear();
         osd_device.Initialize(in_img_shape[0], in_img_shape[1], nullptr);
     } else {
-        osd_device.Initialize(in_img_shape[0], in_img_shape[1], bitmap_lut_path.c_str());
+        m_bitmap_lut_path_full = ResolveAppAssetPath(bitmap_lut_path);
+        long lut_size = 0;
+        if (FileExists(m_bitmap_lut_path_full, &lut_size)) {
+            std::cout << "[VISUALIZER] bitmap LUT resolved: "
+                      << m_bitmap_lut_path_full << " size=" << lut_size << " bytes" << std::endl;
+        } else {
+            std::cerr << "[VISUALIZER] WARN: bitmap LUT not found after resolve: "
+                      << m_bitmap_lut_path_full << std::endl;
+        }
+        osd_device.Initialize(in_img_shape[0], in_img_shape[1], m_bitmap_lut_path_full.c_str());
     }
 }
 
 
 /**
- * @brief 绘制测试矩形框（用于测试 OSD 功能）
- */
+ * @brief 绘制测试矩形框（用于测试 OSD 功能�? */
 void VISUALIZER::Draw() {
     std::vector<sst::device::osd::OsdQuadRangle> quad_rangle_vec;
 
@@ -512,7 +715,6 @@ void VISUALIZER::Draw(const std::vector<ObjectDetection>& detections) {
 }
 
 void VISUALIZER::Draw(const std::vector<PoseDetection>& detections, float kpt_conf_threshold) {
-    // COCO 17 点骨架连接表，画线前会按关键点置信度过滤，避免低置信节点把骨架糊成一团。
     static const std::array<std::array<int, 2>, 16> kSkeleton = {{
         {{0, 1}}, {{0, 2}}, {{1, 3}}, {{2, 4}},
         {{5, 6}}, {{5, 7}}, {{7, 9}}, {{6, 8}},
@@ -694,4 +896,109 @@ void VISUALIZER::DrawPose(cv::Mat& image,
  */
 void VISUALIZER::Release() {
     osd_device.Release();
+}
+
+void VISUALIZER::ClearLayer(int layer_id) {
+    osd_device.ClearLayer(layer_id);
+}
+
+void VISUALIZER::DrawBitmap(const std::string& bitmap_path,
+                            const std::string& lut_path,
+                            int pos_x,
+                            int pos_y,
+                            int layer_id,
+                            bool flush) {
+    const std::string bitmap_full_path = ResolveAppAssetPath(bitmap_path);
+    const std::string lut_full_path =
+        lut_path.empty() ? m_bitmap_lut_path_full : ResolveAppAssetPath(lut_path);
+
+    static int s_bitmap_log_count = 0;
+    if (s_bitmap_log_count < 12) {
+        long bitmap_size = 0;
+        const bool bitmap_ok = FileExists(bitmap_full_path, &bitmap_size);
+        std::cout << "[VISUALIZER] draw bitmap[" << s_bitmap_log_count << "]: path="
+                  << bitmap_full_path << " exists=" << (bitmap_ok ? 1 : 0)
+                  << " size=" << bitmap_size
+                  << " pos=(" << pos_x << "," << pos_y << ") layer=" << layer_id
+                  << " lut=" << (lut_full_path.empty() ? "default" : lut_full_path)
+                  << std::endl;
+        ++s_bitmap_log_count;
+    }
+
+    osd_device.DrawTexture(bitmap_full_path.c_str(),
+                           lut_full_path.empty() ? nullptr : lut_full_path.c_str(),
+                           layer_id,
+                           pos_x,
+                           pos_y,
+                           fdevice::TYPE_ALPHA100,
+                           flush);
+}
+
+void VISUALIZER::DrawSnakeGame(const SnakeRenderData& game) {
+    if (game.board_cols <= 0 || game.board_rows <= 0) {
+        osd_device.ClearLayer(kSnakeGraphicLayerId);
+        osd_device.ClearLayer(kSnakeBitmapLayerId);
+        return;
+    }
+
+    osd_device.ClearLayer(kSnakeGraphicLayerId);
+    osd_device.ClearLayer(kSnakeBitmapLayerId);
+
+    const float board_left = static_cast<float>(ScaleDesignX(m_width, 860.0f));
+    const float board_top = static_cast<float>(ScaleDesignY(m_height, 276.0f));
+    const float board_width = static_cast<float>(ScaleDesignX(m_width, 960.0f));
+    const float board_height = static_cast<float>(ScaleDesignY(m_height, 528.0f));
+    const float cell_w = board_width / static_cast<float>(game.board_cols);
+    const float cell_h = board_height / static_cast<float>(game.board_rows);
+    const float sprite_half = static_cast<float>(kSnakeSpriteCanvasSize) * 0.5f;
+
+    std::vector<fdevice::COVER_ATTR_S> snake_covers;
+    snake_covers.reserve(game.snake.size() + 1U);
+    for (size_t i = 0; i < game.snake.size(); ++i) {
+        const SnakeCell& cell = game.snake[i];
+        const int color = (i == 0) ? kSnakeHeadColor : kSnakeBodyColor;
+        snake_covers.emplace_back(MakeSnakeCellCover(cell,
+                                                     board_left,
+                                                     board_top,
+                                                     cell_w,
+                                                     cell_h,
+                                                     color));
+    }
+    AppendGraphicNumber(&snake_covers,
+                        game.score,
+                        static_cast<float>(ScaleDesignX(m_width, 1810.0f)),
+                        static_cast<float>(ScaleDesignY(m_height, 112.0f)),
+                        static_cast<float>(m_width) / static_cast<float>(kDesignWidth),
+                        kSnakeHeadColor);
+    AppendGraphicNumber(&snake_covers,
+                        game.best_score,
+                        static_cast<float>(ScaleDesignX(m_width, 1810.0f)),
+                        static_cast<float>(ScaleDesignY(m_height, 182.0f)),
+                        static_cast<float>(m_width) / static_cast<float>(kDesignWidth),
+                        kSnakeBodyColor);
+    osd_device.DrawCovers(snake_covers, kSnakeGraphicLayerId);
+
+    if (game.has_food) {
+        const float center_x = board_left + (static_cast<float>(game.food.x) + 0.5f) * cell_w;
+        const float center_y = board_top + (static_cast<float>(game.food.y) + 0.5f) * cell_h;
+        DrawBitmap(SnakeAsset("food/food_apple.ssbmp"),
+                   "",
+                   ClampSpriteX(center_x - sprite_half, board_left, board_width),
+                   ClampSpriteY(center_y - sprite_half, board_top, board_height),
+                   kSnakeBitmapLayerId,
+                   false);
+    }
+
+
+    const std::string gesture_bitmap = GestureBitmapPath(game.last_command);
+    if (!gesture_bitmap.empty()) {
+        DrawBitmap(gesture_bitmap,
+                   "",
+                   ScaleDesignX(m_width, 225.0f),
+                   ScaleDesignY(m_height, 410.0f),
+                   kSnakeBitmapLayerId,
+                   false);
+    }
+
+    osd_device.FlushTextureLayer(kSnakeBitmapLayerId);
 }

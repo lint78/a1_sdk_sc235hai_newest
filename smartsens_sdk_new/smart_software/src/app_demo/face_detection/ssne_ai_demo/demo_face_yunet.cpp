@@ -4,11 +4,12 @@
  * @Email: hongying.he@smartsenstech.com
  * @Date: 2025-01-20
  * @Copyright (c) 2025 SmartSens
- * @Description: YOLOv8 检测 + 低频 pose 演示
+ * @Description: YOLOv8 检�?+ 低频 pose 演示
  */
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -17,6 +18,7 @@
 #include <mutex>
 #include <sstream>
 #include <thread>
+#include "include/companion_mode.hpp"
 #include "event_recorder.hpp"
 #include <unistd.h>
 #include "fallen_judge.hpp"
@@ -40,7 +42,22 @@ constexpr int kPoseForceInterval = 15;
 constexpr int kPoseAssistDetectFrames = 15;
 constexpr int kPoseVisualMaxHoldFrames = 15;
 constexpr float kPoseTrackScoreFloor = 0.50f;
+constexpr float kGestureConfThreshold = 0.55f;
+constexpr int kSnakeBoardCols = 20;
+constexpr int kSnakeBoardRows = 11;
 constexpr int kDetectNumClasses = 7;
+constexpr std::array<float, 4> kGestureGuideBoxNarrowCrop = {
+    0.0f, 96.0f, 384.0f, 480.0f
+};
+constexpr std::array<float, 4> kGestureGuideBoxWideCrop = {
+    0.0f, 48.0f, 540.0f, 840.0f
+};
+constexpr std::array<float, 4> kGestureGuideBoxCenterCrop = {
+    210.0f, 27.0f, 750.0f, 810.0f
+};
+constexpr std::array<float, 4> kSnakeBoardBoxOriginal = {
+    860.0f, 276.0f, 1820.0f, 804.0f
+};
 constexpr int kSnakeClassId = 2;
 constexpr int kMouseClassId = 3;
 constexpr int kPersonClassId = 4;
@@ -219,6 +236,31 @@ bool IsPoseRequestRoiLegal(const std::array<float, 4>& focus_box,
     return true;
 }
 
+bool IsSameSnakeCells(const std::vector<SnakeCell>& a, const std::vector<SnakeCell>& b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (a[i].x != b[i].x || a[i].y != b[i].y) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool IsSameSnakeRenderData(const SnakeRenderData& a, const SnakeRenderData& b) {
+    return a.board_cols == b.board_cols &&
+           a.board_rows == b.board_rows &&
+           a.score == b.score &&
+           a.best_score == b.best_score &&
+           a.paused == b.paused &&
+           a.game_over == b.game_over &&
+           a.last_command == b.last_command &&
+           a.has_food == b.has_food &&
+           a.food.x == b.food.x &&
+           a.food.y == b.food.y &&
+           IsSameSnakeCells(a.snake, b.snake);
+}
 const char* DetectClassName(int class_id) {
     if (class_id < 0 || class_id >= static_cast<int>(kDetectClassNames.size())) {
         return "unknown";
@@ -253,7 +295,6 @@ bool HasFireDetection(const std::vector<ObjectDetection>& detections) {
 }
 
 bool HasIntrusionDetection(const std::vector<ObjectDetection>& detections) {
-    // 入侵事件仅由 mouse / snake 触发。
     return std::any_of(detections.begin(),
                        detections.end(),
                        [](const ObjectDetection& det) {
@@ -372,11 +413,232 @@ void UpdateBestPoseSummary(const std::vector<PoseDetection>& poses,
     *best_pose_score = score;
 }
 
+enum class DemoMode {
+    GUARD = 0,
+    COMPANION_SNAKE = 1
+};
+
+enum class GestureRoiMode {
+    NARROW = 0,
+    WIDE = 1,
+    CENTER = 2,
+    FULL = 3
+};
+
+const char* GestureRoiModeName(GestureRoiMode mode) {
+    switch (mode) {
+        case GestureRoiMode::NARROW:
+            return "narrow";
+        case GestureRoiMode::WIDE:
+            return "wide";
+        case GestureRoiMode::CENTER:
+            return "center";
+        case GestureRoiMode::FULL:
+            return "full";
+        default:
+            return "unknown";
+    }
+}
+
+const std::array<float, 4>* GestureFocusBoxForMode(GestureRoiMode mode) {
+    switch (mode) {
+        case GestureRoiMode::NARROW:
+            return &kGestureGuideBoxNarrowCrop;
+        case GestureRoiMode::WIDE:
+            return &kGestureGuideBoxWideCrop;
+        case GestureRoiMode::CENTER:
+            return &kGestureGuideBoxCenterCrop;
+        case GestureRoiMode::FULL:
+            return nullptr;
+        default:
+            return &kGestureGuideBoxCenterCrop;
+    }
+}
+
+std::array<float, 4> GestureGuideBoxForDisplay(GestureRoiMode mode,
+                                               const std::array<int, 2>& crop_shape) {
+    const std::array<float, 4>* focus_box = GestureFocusBoxForMode(mode);
+    if (focus_box != nullptr) {
+        return *focus_box;
+    }
+    return {0.0f, 0.0f, static_cast<float>(crop_shape[0]), static_cast<float>(crop_shape[1])};
+}
+std::string TrimInput(const std::string& value) {
+    const char* whitespace = " \t\r\n";
+    const size_t begin = value.find_first_not_of(whitespace);
+    if (begin == std::string::npos) {
+        return "";
+    }
+    const size_t end = value.find_last_not_of(whitespace);
+    return value.substr(begin, end - begin + 1);
+}
+
 }  // namespace
 
 bool g_exit_flag = false;
 std::mutex g_mtx;
 EventRecorder g_event_recorder;
+std::atomic<int> g_demo_mode(static_cast<int>(DemoMode::GUARD));
+std::atomic<bool> g_snake_reset_requested(false);
+std::atomic<bool> g_snake_pause_requested(false);
+std::atomic<bool> g_snake_resume_requested(false);
+std::atomic<int> g_forced_snake_command(static_cast<int>(GestureCommand::NONE));
+std::atomic<int> g_forced_snake_hold_frames(0);
+std::atomic<int> g_gesture_roi_mode(static_cast<int>(GestureRoiMode::CENTER));
+std::atomic<bool> g_gesture_roi_changed(false);
+std::atomic<bool> g_gesture_normalize_enabled(true);
+std::atomic<int> g_gesture_input_format(SSNE_RGB);
+std::atomic<bool> g_companion_reinit_requested(false);
+
+DemoMode GetDemoMode() {
+    return static_cast<DemoMode>(g_demo_mode.load());
+}
+
+void SetDemoMode(DemoMode mode) {
+    g_demo_mode.store(static_cast<int>(mode));
+}
+
+GestureRoiMode GetGestureRoiMode() {
+    return static_cast<GestureRoiMode>(g_gesture_roi_mode.load());
+}
+
+void SetGestureRoiMode(GestureRoiMode mode) {
+    g_gesture_roi_mode.store(static_cast<int>(mode));
+    g_gesture_roi_changed.store(true);
+}
+
+bool GetGestureNormalizeEnabled() {
+    return g_gesture_normalize_enabled.load();
+}
+
+uint8_t GetGestureInputFormat() {
+    return static_cast<uint8_t>(g_gesture_input_format.load());
+}
+
+void SetGestureNormalizeEnabled(bool enabled) {
+    g_gesture_normalize_enabled.store(enabled);
+    g_companion_reinit_requested.store(true);
+}
+
+void SetGestureInputFormat(uint8_t format) {
+    g_gesture_input_format.store(static_cast<int>(format));
+    g_companion_reinit_requested.store(true);
+}
+
+void PrintCompanionHelp() {
+    std::cout << "Demo mode commands:\n";
+    std::cout << "  hu | guard | yolo | mode guard       switch to family safety mode\n";
+    std::cout << "  pei | snake | game | mode companion  switch to companion gesture mode\n";
+    std::cout << "  snake reset                         restart snake game\n";
+    std::cout << "  snake pause                         pause snake game\n";
+    std::cout << "  snake resume                        resume snake game\n";
+    std::cout << "  up/down/left/right                  force snake direction for debug\n";
+    std::cout << "  roi narrow|wide|center|full         switch gesture ROI for debug\n";
+    std::cout << "  norm on|off                         rebuild gesture preprocess normalize\n";
+    std::cout << "  color rgb|bgr                       rebuild gesture input color order\n";
+}
+
+bool HandleDemoCommand(const std::string& line) {
+    const std::string cmd = TrimInput(line);
+    if (cmd.empty()) {
+        return false;
+    }
+
+    if (cmd == "hu" || cmd == "guard" || cmd == "yolo" || cmd == "protect" || cmd == "mode hu" || cmd == "mode guard" || cmd == "mode yolo" || cmd == "mode protect") {
+        SetDemoMode(DemoMode::GUARD);
+        std::cout << "Switched to HU/guard mode (YOLO)." << std::endl;
+        return true;
+    }
+    if (cmd == "pei" || cmd == "companion" || cmd == "gesture" || cmd == "snake" || cmd == "game" || cmd == "mode pei" || cmd == "mode companion" || cmd == "mode gesture" || cmd == "mode snake") {
+        SetDemoMode(DemoMode::COMPANION_SNAKE);
+        g_snake_reset_requested.store(true);
+        std::cout << "Switched to PEI/companion mode (gesture)." << std::endl;
+        return true;
+    }
+    if (cmd == "snake reset" || cmd == "game reset") {
+        g_snake_reset_requested.store(true);
+        std::cout << "Snake reset requested." << std::endl;
+        return true;
+    }
+    if (cmd == "snake pause" || cmd == "game pause") {
+        g_snake_pause_requested.store(true);
+        std::cout << "Snake pause requested." << std::endl;
+        return true;
+    }
+    if (cmd == "roi narrow" || cmd == "roinarrow" || cmd == "narrowroi" || cmd == "roi_narrow" || cmd == "gesture roi narrow") {
+        SetGestureRoiMode(GestureRoiMode::NARROW);
+        std::cout << "Gesture ROI mode: narrow." << std::endl;
+        return true;
+    }
+    if (cmd == "roi wide" || cmd == "roiwide" || cmd == "wideroi" || cmd == "roi_wide" || cmd == "gesture roi wide") {
+        SetGestureRoiMode(GestureRoiMode::WIDE);
+        std::cout << "Gesture ROI mode: wide." << std::endl;
+        return true;
+    }
+    if (cmd == "roi center" || cmd == "roicenter" || cmd == "centerroi" || cmd == "roi_center" || cmd == "gesture roi center") {
+        SetGestureRoiMode(GestureRoiMode::CENTER);
+        std::cout << "Gesture ROI mode: center." << std::endl;
+        return true;
+    }
+    if (cmd == "roi full" || cmd == "roifull" || cmd == "fullroi" || cmd == "full roi" || cmd == "roi_full" || cmd == "gesture roi full") {
+        SetGestureRoiMode(GestureRoiMode::FULL);
+        std::cout << "Gesture ROI mode: full." << std::endl;
+        return true;
+    }
+    if (cmd == "norm on" || cmd == "normalize on" || cmd == "normal on") {
+        SetGestureNormalizeEnabled(true);
+        std::cout << "Gesture normalize: on. Reinitializing companion model." << std::endl;
+        return true;
+    }
+    if (cmd == "norm off" || cmd == "normalize off" || cmd == "normal off") {
+        SetGestureNormalizeEnabled(false);
+        std::cout << "Gesture normalize: off. Reinitializing companion model." << std::endl;
+        return true;
+    }
+    if (cmd == "color rgb" || cmd == "rgb" || cmd == "gesture rgb") {
+        SetGestureInputFormat(SSNE_RGB);
+        std::cout << "Gesture input color: RGB. Reinitializing companion model." << std::endl;
+        return true;
+    }
+    if (cmd == "color bgr" || cmd == "bgr" || cmd == "gesture bgr") {
+        SetGestureInputFormat(SSNE_BGR);
+        std::cout << "Gesture input color: BGR. Reinitializing companion model." << std::endl;
+        return true;
+    }    if (cmd == "snake resume" || cmd == "game resume") {
+        g_snake_resume_requested.store(true);
+        std::cout << "Snake resume requested." << std::endl;
+        return true;
+    }
+    if (cmd == "up" || cmd == "snake up" || cmd == "game up") {
+        g_forced_snake_command.store(static_cast<int>(GestureCommand::TU));
+        g_forced_snake_hold_frames.store(60);
+        std::cout << "Forced snake direction: up." << std::endl;
+        return true;
+    }
+    if (cmd == "down" || cmd == "snake down" || cmd == "game down") {
+        g_forced_snake_command.store(static_cast<int>(GestureCommand::TD));
+        g_forced_snake_hold_frames.store(60);
+        std::cout << "Forced snake direction: down." << std::endl;
+        return true;
+    }
+    if (cmd == "left" || cmd == "snake left" || cmd == "game left") {
+        g_forced_snake_command.store(static_cast<int>(GestureCommand::TL));
+        g_forced_snake_hold_frames.store(60);
+        std::cout << "Forced snake direction: left." << std::endl;
+        return true;
+    }
+    if (cmd == "right" || cmd == "snake right" || cmd == "game right") {
+        g_forced_snake_command.store(static_cast<int>(GestureCommand::TR));
+        g_forced_snake_hold_frames.store(60);
+        std::cout << "Forced snake direction: right." << std::endl;
+        return true;
+    }
+    if (cmd == "mode" || cmd == "snake help" || cmd == "game help") {
+        PrintCompanionHelp();
+        return true;
+    }
+    return false;
+}
 
 void keyboard_listener() {
     std::string input;
@@ -384,6 +646,9 @@ void keyboard_listener() {
 
     while (std::getline(std::cin, input)) {
         bool should_exit = false;
+        if (HandleDemoCommand(input)) {
+            continue;
+        }
         if (!g_event_recorder.HandleCommand(input, &should_exit)) {
             std::cout << "Unknown command. Input 'help' for commands." << std::endl;
             continue;
@@ -415,6 +680,33 @@ struct MainLoopPerfStats {
     float last_best_pose_score = 0.0f;
     std::string last_detection_summary = "none";
     std::string last_fall_state = "NORMAL";
+    std::chrono::steady_clock::time_point window_begin = std::chrono::steady_clock::now();
+};
+
+struct SnakeLoopPerfStats {
+    uint64_t frames = 0;
+    double capture_ms = 0.0;
+    double gesture_ms = 0.0;
+    double game_ms = 0.0;
+    double osd_ms = 0.0;
+    int last_score = 0;
+    int last_best_score = 0;
+    int last_snake_len = 0;
+    int last_head_x = -1;
+    int last_head_y = -1;
+    int last_food_x = -1;
+    int last_food_y = -1;
+    GestureCommand last_command = GestureCommand::NONE;
+    GestureCommand last_raw_command = GestureCommand::NONE;
+    GestureCommand last_applied_command = GestureCommand::NONE;
+    SnakeDirection last_direction = SnakeDirection::RIGHT;
+    float last_confidence = 0.0f;
+    std::array<float, 4> last_logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 4> last_probs = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::string last_state = "running";
+    const char* last_roi_mode = "center";
+    const char* last_norm_mode = "on";
+    const char* last_color_mode = "RGB";
     std::chrono::steady_clock::time_point window_begin = std::chrono::steady_clock::now();
 };
 
@@ -469,6 +761,74 @@ void FlushMainLoopPerfIfNeeded(MainLoopPerfStats* stats) {
     stats->window_begin = now;
 }
 
+void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
+    using clock = std::chrono::steady_clock;
+    const auto now = clock::now();
+    const double elapsed_ms =
+        static_cast<double>(std::chrono::duration_cast<std::chrono::milliseconds>(now - stats->window_begin).count());
+    if (elapsed_ms < 1000.0 || stats->frames == 0) {
+        return;
+    }
+
+    const double inv = 1.0 / static_cast<double>(stats->frames);
+    const double fps = static_cast<double>(stats->frames) * 1000.0 / elapsed_ms;
+    LOG_INFO("serial mode=snake build=snake_preproc_dump_v7 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s stable=%s raw=%s applied=%s dir=%s conf=%.3f logits=[TU %.3f TD %.3f TL %.3f TR %.3f] scores=[TU %.3f TD %.3f TL %.3f TR %.3f] state=%s\n",
+             fps,
+             stats->capture_ms * inv,
+             stats->gesture_ms * inv,
+             stats->game_ms * inv,
+             stats->osd_ms * inv,
+             stats->last_score,
+             stats->last_best_score,
+             stats->last_snake_len,
+             stats->last_head_x,
+             stats->last_head_y,
+             stats->last_food_x,
+             stats->last_food_y,
+             stats->last_roi_mode,
+             stats->last_norm_mode,
+             stats->last_color_mode,
+             GestureCommandName(stats->last_command),
+             GestureCommandName(stats->last_raw_command),
+             GestureCommandName(stats->last_applied_command),
+             SnakeDirectionName(stats->last_direction),
+             stats->last_confidence,
+             stats->last_logits[0],
+             stats->last_logits[1],
+             stats->last_logits[2],
+             stats->last_logits[3],
+             stats->last_probs[0],
+             stats->last_probs[1],
+             stats->last_probs[2],
+             stats->last_probs[3],
+             stats->last_state.c_str());
+
+    stats->frames = 0;
+    stats->capture_ms = 0.0;
+    stats->gesture_ms = 0.0;
+    stats->game_ms = 0.0;
+    stats->osd_ms = 0.0;
+    stats->last_score = 0;
+    stats->last_best_score = 0;
+    stats->last_snake_len = 0;
+    stats->last_head_x = -1;
+    stats->last_head_y = -1;
+    stats->last_food_x = -1;
+    stats->last_food_y = -1;
+    stats->last_command = GestureCommand::NONE;
+    stats->last_raw_command = GestureCommand::NONE;
+    stats->last_applied_command = GestureCommand::NONE;
+    stats->last_direction = SnakeDirection::RIGHT;
+    stats->last_confidence = 0.0f;
+    stats->last_logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    stats->last_probs = {0.0f, 0.0f, 0.0f, 0.0f};
+    stats->last_state = "running";
+    stats->last_roi_mode = "center";
+    stats->last_norm_mode = "on";
+    stats->last_color_mode = "RGB";
+    stats->window_begin = now;
+}
+
 int main() {
     using clock = std::chrono::steady_clock;
 
@@ -479,34 +839,111 @@ int main() {
     std::array<int, 2> img_shape = {img_width, img_height};
     std::array<int, 2> crop_shape = {1080, 1080};
     std::array<int, 2> detect_shape = {256, 256};
-    // 模型运行尺寸按 [width, height] 保存。
+    std::array<int, 2> gesture_shape = {256, 256};
     std::array<int, 2> pose_shape = {480, 320};
 
     std::string detect_model_path = "/app_demo/app_assets/models/yolov8nano.m1model";
     std::string pose_model_path = "/app_demo/app_assets/models/yolov8_pose.m1model";
-
-    if (ssne_initial()) {
-        fprintf(stderr, "SSNE initialization failed!\n");
-        return -1;
-    }
+    std::string gesture_model_path = "/app_demo/app_assets/models/gesture_mobilenetv1.m1model";
 
     IMAGEPROCESSOR processor;
-    processor.Initialize(&img_shape);
-
     YOLOV8NANO detect_detector;
-    detect_detector.Initialize(detect_model_path, &crop_shape, &detect_shape, 300, kDetectNumClasses);
-
     YUNET pose_detector;
-    pose_detector.Initialize(pose_model_path, &crop_shape, &pose_shape, true, 300);
-
+    GestureClassifier gesture_classifier;
     ObjectDetectionResult detect_result;
     FaceDetectionResult pose_result;
-
     VISUALIZER visualizer;
-    visualizer.Initialize(img_shape, "shared_colorLUT.sscl");
 
-    LOG_INFO("warmup sleep for 1 second before entering the main loop\n");
-    sleep(1);
+    bool runtime_initialized = false;
+    bool guard_models_initialized = false;
+    bool companion_model_initialized = false;
+
+    auto ReleaseGuardModels = [&]() {
+        if (guard_models_initialized) {
+            pose_detector.Release();
+            detect_detector.Release();
+            guard_models_initialized = false;
+        }
+    };
+
+    auto ReleaseCompanionModel = [&]() {
+        if (companion_model_initialized) {
+            gesture_classifier.Release();
+            companion_model_initialized = false;
+        }
+    };
+
+    auto ReleaseRuntime = [&]() {
+        ReleaseCompanionModel();
+        ReleaseGuardModels();
+        if (runtime_initialized) {
+            processor.Release();
+            visualizer.Release();
+            if (ssne_release()) {
+                fprintf(stderr, "SSNE release failed during mode switch!\n");
+            }
+            runtime_initialized = false;
+        }
+    };
+
+    auto InitializeCommonRuntime = [&](const std::string& bitmap_lut_path) {
+        if (runtime_initialized) {
+            return;
+        }
+        if (ssne_initial()) {
+            fprintf(stderr, "SSNE initialization failed!\n");
+            return;
+        }
+        processor.Initialize(&img_shape);
+        visualizer.Initialize(img_shape, bitmap_lut_path);
+        runtime_initialized = true;
+    };
+
+    auto InitializeGuardMode = [&]() {
+        if (guard_models_initialized) {
+            return;
+        }
+        InitializeCommonRuntime("");
+        if (!runtime_initialized) {
+            return;
+        }
+        detect_detector.Initialize(detect_model_path, &crop_shape, &detect_shape, 300, kDetectNumClasses);
+        pose_detector.Initialize(pose_model_path, &crop_shape, &pose_shape, true, 300);
+        guard_models_initialized = true;
+        LOG_INFO("guard mode models initialized\n");
+    };
+
+    auto InitializeCompanionMode = [&]() {
+        if (companion_model_initialized) {
+            return;
+        }
+        InitializeCommonRuntime("ui/snake/shared_colorLUT.sscl");
+        if (!runtime_initialized) {
+            return;
+        }
+        gesture_classifier.Initialize(gesture_model_path,
+                                      &crop_shape,
+                                      &gesture_shape,
+                                      GetGestureNormalizeEnabled(),
+                                      GetGestureInputFormat());
+        companion_model_initialized = true;
+        LOG_INFO("companion mode model initialized\n");
+    };
+
+    auto PrepareModeRuntime = [&](DemoMode mode) {
+        ReleaseRuntime();
+        if (mode == DemoMode::COMPANION_SNAKE) {
+            InitializeCompanionMode();
+        } else {
+            InitializeGuardMode();
+        }
+        if (runtime_initialized) {
+            LOG_INFO("warmup sleep for 1 second after mode runtime init\n");
+            sleep(1);
+        }
+    };
+
+    PrepareModeRuntime(GetDemoMode());
 
     FallJudge judge;
     FallJudgeConfig cfg;
@@ -550,6 +987,7 @@ int main() {
     uint64_t next_pose_frame = 0;
     uint64_t pose_assist_detect_until = 0;
     MainLoopPerfStats perf_stats;
+    SnakeLoopPerfStats snake_perf_stats;
     ssne_tensor_t img_sensor = ssne_tensor_t{};
     std::vector<PoseDetection> cached_poses_original_coord;
     std::vector<PoseDetection> last_visual_poses_original_coord;
@@ -559,15 +997,201 @@ int main() {
     bool last_visual_pose_valid = false;
     uint64_t last_visual_pose_frame_index = 0;
     bool person_like_visual_active = false;
+    GestureTemporalFilter gesture_filter(3, 2, 10);
+    SnakeGame snake_game;
+    snake_game.Initialize(kSnakeBoardCols, kSnakeBoardRows);
+    GestureCommand last_stable_command = GestureCommand::NONE;
+    auto next_snake_tick = clock::now() + std::chrono::milliseconds(snake_game.TickIntervalMs());
+    DemoMode last_mode = GetDemoMode();
+    SnakeRenderData last_snake_render_data;
+    bool has_last_snake_render_data = false;
+    bool gesture_guide_visible = false;
 
     std::thread listener_thread(keyboard_listener);
 
     while (!check_exit_flag()) {
+        const DemoMode current_mode = GetDemoMode();
+        if (current_mode == DemoMode::COMPANION_SNAKE &&
+            g_companion_reinit_requested.exchange(false)) {
+            PrepareModeRuntime(current_mode);
+            gesture_filter.Reset();
+            snake_game.Reset();
+            next_snake_tick = clock::now() + std::chrono::milliseconds(snake_game.TickIntervalMs());
+            has_last_snake_render_data = false;
+            gesture_guide_visible = false;
+            continue;
+        }
+
+        if (current_mode != last_mode) {
+            PrepareModeRuntime(current_mode);
+            detect_result.Clear();
+            pose_result.Clear();
+            cached_poses_original_coord.clear();
+            last_visual_poses_original_coord.clear();
+            detections_original_coord.clear();
+            pose_request.pending = false;
+            last_visual_pose_valid = false;
+            last_visual_pose_frame_index = 0;
+            person_like_visual_active = false;
+            gesture_filter.Reset();
+            last_stable_command = GestureCommand::NONE;
+            has_last_snake_render_data = false;
+            gesture_guide_visible = false;
+            if (current_mode == DemoMode::COMPANION_SNAKE) {
+                snake_game.Reset();
+                next_snake_tick = clock::now() + std::chrono::milliseconds(snake_game.TickIntervalMs());
+            } else {
+                next_pose_frame = 0;
+                pose_assist_detect_until = 0;
+            }
+            last_mode = current_mode;
+            continue;
+        }
+
+        if (!runtime_initialized) {
+            sleep(1);
+            continue;
+        }
+
         const auto capture_begin = clock::now();
         processor.GetImage(&img_sensor);
         const auto capture_end = clock::now();
 
-        // Pose 不和 detect 串行绑定：只有存在人形目标、且达到强制兜底周期时，才在本帧让出 detect 去跑 pose。
+        if (current_mode == DemoMode::COMPANION_SNAKE) {
+            if (g_snake_reset_requested.exchange(false)) {
+                snake_game.Reset();
+                gesture_filter.Reset();
+                next_snake_tick = clock::now() + std::chrono::milliseconds(snake_game.TickIntervalMs());
+                has_last_snake_render_data = false;
+                gesture_guide_visible = false;
+            }
+            if (g_snake_pause_requested.exchange(false)) {
+                snake_game.SetPaused(true);
+            }
+            if (g_snake_resume_requested.exchange(false)) {
+                snake_game.SetPaused(false);
+            }
+
+            if (g_gesture_roi_changed.exchange(false)) {
+                gesture_filter.Reset();
+                gesture_guide_visible = false;
+            }
+            const GestureRoiMode gesture_roi_mode = GetGestureRoiMode();
+            const std::array<float, 4>* gesture_focus_box =
+                GestureFocusBoxForMode(gesture_roi_mode);
+            GestureResult gesture_result;
+            gesture_classifier.SetFocusBox(gesture_focus_box);
+            const auto gesture_begin = clock::now();
+            gesture_classifier.Predict(&img_sensor, &gesture_result, kGestureConfThreshold);
+            const auto gesture_end = clock::now();
+
+            const GestureCommand filtered_command = gesture_filter.Push(gesture_result);
+            GestureCommand forced_command = GestureCommand::NONE;
+            if (g_forced_snake_hold_frames.load() > 0) {
+                forced_command =
+                    static_cast<GestureCommand>(g_forced_snake_command.load());
+                g_forced_snake_hold_frames.fetch_sub(1);
+            } else {
+                g_forced_snake_command.store(static_cast<int>(GestureCommand::NONE));
+            }
+            const GestureCommand stable_command =
+                forced_command != GestureCommand::NONE ? forced_command : filtered_command;
+            GestureCommand applied_command = GestureCommand::NONE;
+            if (stable_command != GestureCommand::NONE) {
+                last_stable_command = stable_command;
+                if (snake_game.IsGameOver() && forced_command != GestureCommand::NONE) {
+                    snake_game.Reset();
+                    next_snake_tick = clock::now() + std::chrono::milliseconds(snake_game.TickIntervalMs());
+                    has_last_snake_render_data = false;
+                }
+                if (!snake_game.IsGameOver()) {
+                    snake_game.SetDirection(
+                        GestureToSnakeDirection(stable_command, snake_game.Direction()));
+                    applied_command = stable_command;
+                }
+            }
+
+            const auto game_begin = clock::now();
+            int tick_guard = 0;
+            const auto snake_now = clock::now();
+            while (snake_now >= next_snake_tick && tick_guard < 1) {
+                snake_game.Tick();
+                next_snake_tick += std::chrono::milliseconds(snake_game.TickIntervalMs());
+                ++tick_guard;
+            }
+            SnakeRenderData render_data = snake_game.BuildRenderData();
+            render_data.last_command =
+                stable_command == GestureCommand::NONE ? last_stable_command : stable_command;
+            render_data.last_command_confidence = gesture_result.confidence;
+            const auto game_end = clock::now();
+
+            const auto osd_begin = clock::now();
+            if (!gesture_guide_visible) {
+                std::vector<ObjectDetection> guide_boxes(2);
+                const std::array<float, 4> gesture_guide_box =
+                    GestureGuideBoxForDisplay(gesture_roi_mode, crop_shape);
+                guide_boxes[0].box = MapBoxToOriginal(gesture_guide_box,
+                                                      crop_offset_x,
+                                                      img_width,
+                                                      img_height);
+                guide_boxes[0].score = 1.0f;
+                guide_boxes[0].class_id = kPersonClassId;
+                guide_boxes[1].box = kSnakeBoardBoxOriginal;
+                guide_boxes[1].score = 1.0f;
+                guide_boxes[1].class_id = kPersonClassId;
+                visualizer.ClearLayer(VISUALIZER::DETECTION_LAYER_ID);
+                visualizer.Draw(guide_boxes);
+                gesture_guide_visible = true;
+            }
+            if (!has_last_snake_render_data ||
+                !IsSameSnakeRenderData(render_data, last_snake_render_data)) {
+                visualizer.DrawSnakeGame(render_data);
+                last_snake_render_data = render_data;
+                has_last_snake_render_data = true;
+            }
+            const auto osd_end = clock::now();
+
+            snake_perf_stats.frames += 1;
+            snake_perf_stats.capture_ms +=
+                static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(capture_end - capture_begin).count()) / 1000.0;
+            snake_perf_stats.gesture_ms +=
+                static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(gesture_end - gesture_begin).count()) / 1000.0;
+            snake_perf_stats.game_ms +=
+                static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(game_end - game_begin).count()) / 1000.0;
+            snake_perf_stats.osd_ms +=
+                static_cast<double>(std::chrono::duration_cast<std::chrono::microseconds>(osd_end - osd_begin).count()) / 1000.0;
+            snake_perf_stats.last_score = render_data.score;
+            snake_perf_stats.last_best_score = render_data.best_score;
+            snake_perf_stats.last_snake_len = static_cast<int>(render_data.snake.size());
+            if (!render_data.snake.empty()) {
+                snake_perf_stats.last_head_x = render_data.snake.front().x;
+                snake_perf_stats.last_head_y = render_data.snake.front().y;
+            } else {
+                snake_perf_stats.last_head_x = -1;
+                snake_perf_stats.last_head_y = -1;
+            }
+            snake_perf_stats.last_food_x = render_data.has_food ? render_data.food.x : -1;
+            snake_perf_stats.last_food_y = render_data.has_food ? render_data.food.y : -1;
+            snake_perf_stats.last_command = render_data.last_command;
+            snake_perf_stats.last_raw_command = gesture_result.command;
+            snake_perf_stats.last_applied_command = applied_command;
+            snake_perf_stats.last_direction = snake_game.Direction();
+            snake_perf_stats.last_confidence = render_data.last_command_confidence;
+            snake_perf_stats.last_logits = gesture_result.logits;
+            snake_perf_stats.last_probs = gesture_result.probabilities;
+            snake_perf_stats.last_state =
+                render_data.game_over ? "game_over" : (render_data.paused ? "paused" : "running");
+            snake_perf_stats.last_roi_mode = GestureRoiModeName(gesture_roi_mode);
+            snake_perf_stats.last_norm_mode =
+                GetGestureNormalizeEnabled() ? "on" : "off";
+            snake_perf_stats.last_color_mode =
+                GetGestureInputFormat() == SSNE_BGR ? "BGR" : "RGB";
+            FlushSnakePerfIfNeeded(&snake_perf_stats);
+
+            ++frame_index;
+            continue;
+        }
+
         const bool force_pose_due =
             person_like_visual_active &&
             !pose_request.pending &&
@@ -584,7 +1208,6 @@ int main() {
         double pose_ms = 0.0;
 
         if (should_run_pose) {
-            // 有合法主目标 ROI 时只把人体附近区域送入 pose；强制兜底帧才允许全局 pose。
             pose_detector.SetEnhanceFocusBox(use_pose_focus ? &pose_request.focus_box : nullptr);
             const auto pose_begin = clock::now();
             pose_detector.Predict(&img_sensor, &pose_result, kPoseConfThreshold);
@@ -648,7 +1271,6 @@ int main() {
                               &perf_stats.last_pose_count);
 
         std::vector<DetectionBox> judge_inputs;
-        // FallJudge 只需要人体轨迹：本帧跑 pose 时使用 pose 框，否则使用 detect 框更新轻量追踪。
         if (should_run_pose && !cached_poses_original_coord.empty()) {
             judge_inputs.reserve(cached_poses_original_coord.size());
             for (const auto& pose : cached_poses_original_coord) {
@@ -687,7 +1309,6 @@ int main() {
         }
 
         if (!should_run_pose) {
-            // 只有“冷却合法 + ROI 合法 + 当前仍有人形目标”时才挂起下一次 pose 请求。
             std::array<float, 4> tracked_box_original = {0.0f, 0.0f, 0.0f, 0.0f};
             std::array<float, 4> tracked_box_crop = {0.0f, 0.0f, 0.0f, 0.0f};
             const bool cooldown_legal = !pose_request.pending && frame_index >= next_pose_frame;
@@ -705,7 +1326,6 @@ int main() {
             }
         }
 
-        // pose 骨架只在本次 pose 成功后刷新；连续超时后清空，避免旧骨架长期停留在画面上。
         if (should_run_pose && !cached_poses_original_coord.empty() && person_like_visual_active) {
             bool visual_pose_updated = false;
             PoseDetection tracked_pose;
@@ -754,7 +1374,6 @@ int main() {
                 ObjectDetection alert_det;
                 alert_det.box = fall_alert_box;
                 alert_det.score = 1.0f;
-                // 复用 fire 的红色告警绘制通道，表示跌倒 suspect/confirmed 也需要红框提示。
                 alert_det.class_id = kFireClassId;
                 visual_detections.push_back(alert_det);
             }
@@ -780,15 +1399,7 @@ int main() {
         listener_thread.join();
     }
 
-    pose_detector.Release();
-    detect_detector.Release();
-    processor.Release();
-    visualizer.Release();
-
-    if (ssne_release()) {
-        fprintf(stderr, "SSNE release failed!\n");
-        return -1;
-    }
+    ReleaseRuntime();
 
     return 0;
 }

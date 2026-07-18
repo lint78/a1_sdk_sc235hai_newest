@@ -1,4 +1,4 @@
-ï»¿/*
+/*
  * @Author: Jingwen Bai
  * @Date: 2024-07-04 11:07:00
  * @Description: osd device
@@ -22,7 +22,8 @@ namespace device {
 namespace osd {
 
 OsdDevice::OsdDevice()
-    : m_height(0),
+    : m_osd_handle(0),
+      m_height(0),
       m_width(0) {
 }
 
@@ -31,11 +32,11 @@ OsdDevice::~OsdDevice() {
 }
 
 void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
-    // ä¿å­˜æ•´å¼ è¾“å‡ºç”»é¢çš„å°ºå¯¸ï¼Œæ‰€æœ‰å›¾å±‚éƒ½æŒ‰è¿™ä¸ªå°ºå¯¸åˆå§‹åŒ–ã€‚
+    // ±£´æÕûÕÅÊä³ö»­ÃæµÄ³ß´ç£¬ËùÓĞÍ¼²ã¶¼°´Õâ¸ö³ß´ç³õÊ¼»¯¡£
     m_width = width;
     m_height = height;
 
-    // å¦‚æœä¹‹å‰å·²ç»åˆ†é…è¿‡ LUTï¼Œå…ˆé‡Šæ”¾ï¼Œé¿å…é‡å¤ Initialize æ³„æ¼
+    // Èç¹ûÖ®Ç°ÒÑ¾­·ÖÅä¹ı LUT£¬ÏÈÊÍ·Å£¬±ÜÃâÖØ¸´ Initialize Ğ¹Â©
     if (m_pcolor_lut != nullptr) {
         delete[] m_pcolor_lut;
         m_pcolor_lut = nullptr;
@@ -43,7 +44,7 @@ void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
     }
 
     // load osd color lut
-    // å¦‚æœæä¾›äº†ä½å›¾LUTè·¯å¾„ï¼Œä¼˜å…ˆä½¿ç”¨ä½å›¾LUTï¼›å¦åˆ™ä½¿ç”¨é»˜è®¤LUT
+    // Èç¹ûÌá¹©ÁËÎ»Í¼LUTÂ·¾¶£¬ÓÅÏÈÊ¹ÓÃÎ»Í¼LUT£»·ñÔòÊ¹ÓÃÄ¬ÈÏLUT
     if (bitmap_lut_path != nullptr && std::strlen(bitmap_lut_path) > 0) {
         if (LoadLutFile(bitmap_lut_path) == 0) {
             std::cout << "[OsdDevice] Using bitmap LUT: " << bitmap_lut_path << std::endl;
@@ -61,22 +62,22 @@ void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
         }
     }
 
-    // æ‰“å¼€åº•å±‚ OSD è®¾å¤‡ã€‚
+    // ´ò¿ªµ×²ã OSD Éè±¸¡£
     m_osd_handle = osd_open_device();
     if (m_osd_handle == 0) {
         std::cerr << "[OsdDevice] ERROR: osd_open_device failed!" << std::endl;
         return;
     }
 
-    // init osd (å¿…é¡»åœ¨åˆ›å»ºå›¾å±‚å‰è°ƒç”¨)
+    // init osd (±ØĞëÔÚ´´½¨Í¼²ãÇ°µ÷ÓÃ)
     int ret = osd_init_device(m_osd_handle, OSD_LAYER_SIZE, (char*)m_pcolor_lut);
     if (ret != 0) {
         std::cerr << "[OsdDevice] ERROR: osd_init_device failed! ret=" << ret << std::endl;
         return;
     }
 
-    // 0/1 å·å›¾å±‚ç”¨äºç»˜åˆ¶å›¾å½¢ç±»å¯¹è±¡ï¼Œæ¯”å¦‚çŸ©å½¢æ¡†ã€çº¿æ®µå’Œ coverã€‚
-    int dma_size = 1024;  // å›¾å½¢å±‚ä½¿ç”¨è¾ƒå°çš„ DMA buffer
+    // 0/1 ºÅÍ¼²ãÓÃÓÚ»æÖÆÍ¼ĞÎÀà¶ÔÏó£¬±ÈÈç¾ØĞÎ¿ò¡¢Ïß¶ÎºÍ cover¡£
+    int dma_size = 1024;  // Í¼ĞÎ²ãÊ¹ÓÃ½ÏĞ¡µÄ DMA buffer
     for (int layer_index = 0; layer_index < 2; layer_index++) {
         ret = osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, dma_size);
         if (ret != 0) {
@@ -85,7 +86,7 @@ void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
             continue;
         }
 
-        usleep(250000);  // 250msï¼ŒåŸæ¥çš„ sleep(0.25) å®é™…ä¸ä¼šç­‰å¾…
+        usleep(250000);  // 250ms£¬Ô­À´µÄ sleep(0.25) Êµ¼Ê²»»áµÈ´ı
 
         ret = osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma_2, dma_size);
         if (ret != 0) {
@@ -94,18 +95,18 @@ void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
             continue;
         }
 
-        int dma_fd = osd_get_buffer_fd(m_osd_handle, m_layer_dma[layer_index].dma);  // å½“å‰ DMA buffer çš„ fd
+        int dma_fd = osd_get_buffer_fd(m_osd_handle, m_layer_dma[layer_index].dma);  // µ±Ç° DMA buffer µÄ fd
 
         LAYER_ATTR_S osd_layer;
         std::memset(&osd_layer, 0, sizeof(osd_layer));
-        osd_layer.codeTYPE = SS_TYPE_QUADRANGLE;                       // å›¾å±‚ç¼–ç ç±»å‹ï¼šå››è¾¹å½¢/cover
-        osd_layer.layer_data_QR.osd_buf.buf_type = BUFFER_TYPE_DMABUF; // å›¾å±‚æ•°æ®æ¥è‡ª DMA buffer
-        osd_layer.layer_data_QR.osd_buf.buf.fd_dmabuf = dma_fd;        // ç»‘å®š DMA fd
-        osd_layer.layerStart.layer_start_x = 0;                        // å›¾å±‚èµ·ç‚¹ x
-        osd_layer.layerStart.layer_start_y = 0;                        // å›¾å±‚èµ·ç‚¹ y
-        osd_layer.layerSize.layer_width = m_width;                     // å›¾å±‚å®½åº¦
-        osd_layer.layerSize.layer_height = m_height;                   // å›¾å±‚é«˜åº¦
-        osd_layer.layer_rgn = {TYPE_GRAPHIC, {m_width, m_height}};     // åŒºåŸŸç±»å‹ï¼šå›¾å½¢å±‚
+        osd_layer.codeTYPE = SS_TYPE_QUADRANGLE;                       // Í¼²ã±àÂëÀàĞÍ£ºËÄ±ßĞÎ/cover
+        osd_layer.layer_data_QR.osd_buf.buf_type = BUFFER_TYPE_DMABUF; // Í¼²ãÊı¾İÀ´×Ô DMA buffer
+        osd_layer.layer_data_QR.osd_buf.buf.fd_dmabuf = dma_fd;        // °ó¶¨ DMA fd
+        osd_layer.layerStart.layer_start_x = 0;                        // Í¼²ãÆğµã x
+        osd_layer.layerStart.layer_start_y = 0;                        // Í¼²ãÆğµã y
+        osd_layer.layerSize.layer_width = m_width;                     // Í¼²ã¿í¶È
+        osd_layer.layerSize.layer_height = m_height;                   // Í¼²ã¸ß¶È
+        osd_layer.layer_rgn = {TYPE_GRAPHIC, {m_width, m_height}};     // ÇøÓòÀàĞÍ£ºÍ¼ĞÎ²ã
 
         ret = osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_index, &osd_layer);
         if (ret != 0) {
@@ -124,10 +125,10 @@ void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
         std::cout << "[OsdDevice] Graphic layer " << layer_index << " initialized successfully" << std::endl;
     }
 
-    // 2 å·å›¾å±‚ç”¨äºç»˜åˆ¶ä½å›¾è´´å›¾ï¼Œå•ç‹¬åˆ›å»º TYPE_IMAGEï¼Œé¿å…å’Œæ£€æµ‹æ¡†å›¾å±‚äº’ç›¸æ±¡æŸ“ã€‚
+    // 2 ºÅÍ¼²ãÓÃÓÚ»æÖÆÎ»Í¼ÌùÍ¼£¬µ¥¶À´´½¨ TYPE_IMAGE£¬±ÜÃâºÍ¼ì²â¿òÍ¼²ã»¥ÏàÎÛÈ¾¡£
     {
         int layer_index = 2;
-        int texture_dma_size = 0x20000;  // ä½å›¾å±‚é€šå¸¸éœ€è¦æ›´å¤§çš„ buffer
+        int texture_dma_size = 0x20000;  // Î»Í¼²ãÍ¨³£ĞèÒª¸ü´óµÄ buffer
 
         ret = osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, texture_dma_size);
         if (ret != 0) {
@@ -149,14 +150,14 @@ void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
 
         LAYER_ATTR_S osd_layer;
         std::memset(&osd_layer, 0, sizeof(osd_layer));
-        osd_layer.codeTYPE = SS_TYPE_RLE;                               // å›¾å±‚ç¼–ç ç±»å‹ï¼šRLE ä½å›¾
-        osd_layer.layer_data_RLE.osd_buf.buf_type = BUFFER_TYPE_DMABUF; // å›¾å±‚æ•°æ®æ¥è‡ª DMA buffer
-        osd_layer.layer_data_RLE.osd_buf.buf.fd_dmabuf = dma_fd;        // ç»‘å®š DMA fd
-        osd_layer.layerStart.layer_start_x = 0;                         // å›¾å±‚èµ·ç‚¹ x
-        osd_layer.layerStart.layer_start_y = 0;                         // å›¾å±‚èµ·ç‚¹ y
-        osd_layer.layerSize.layer_width = m_width;                      // å›¾å±‚å®½åº¦
-        osd_layer.layerSize.layer_height = m_height;                    // å›¾å±‚é«˜åº¦
-        osd_layer.layer_rgn = {TYPE_IMAGE, {m_width, m_height}};        // åŒºåŸŸç±»å‹ï¼šå›¾åƒå±‚
+        osd_layer.codeTYPE = SS_TYPE_RLE;                               // Í¼²ã±àÂëÀàĞÍ£ºRLE Î»Í¼
+        osd_layer.layer_data_RLE.osd_buf.buf_type = BUFFER_TYPE_DMABUF; // Í¼²ãÊı¾İÀ´×Ô DMA buffer
+        osd_layer.layer_data_RLE.osd_buf.buf.fd_dmabuf = dma_fd;        // °ó¶¨ DMA fd
+        osd_layer.layerStart.layer_start_x = 0;                         // Í¼²ãÆğµã x
+        osd_layer.layerStart.layer_start_y = 0;                         // Í¼²ãÆğµã y
+        osd_layer.layerSize.layer_width = m_width;                      // Í¼²ã¿í¶È
+        osd_layer.layerSize.layer_height = m_height;                    // Í¼²ã¸ß¶È
+        osd_layer.layer_rgn = {TYPE_IMAGE, {m_width, m_height}};        // ÇøÓòÀàĞÍ£ºÍ¼Ïñ²ã
 
         std::cout << "[OsdDevice] Creating layer " << layer_index << " with TYPE_IMAGE" << std::endl;
         std::cout << "[OsdDevice] Layer region type: " << (int)osd_layer.layer_rgn.enType
@@ -183,15 +184,15 @@ void OsdDevice::Initialize(int width, int height, const char* bitmap_lut_path) {
         }
     }
 
-    // å›¾å±‚0-1ç”¨äºquad-rangleï¼Œå›¾å±‚2ç”¨äºä½å›¾
-    // å›¾å±‚3-4æœªä½¿ç”¨ï¼Œå·²åˆ é™¤ä»¥èŠ‚çœå†…å­˜
+    // Í¼²ã0-1ÓÃÓÚquad-rangle£¬Í¼²ã2ÓÃÓÚÎ»Í¼
+    // Í¼²ã3-4Î´Ê¹ÓÃ£¬ÒÑÉ¾³ıÒÔ½ÚÊ¡ÄÚ´æ
 }
 
 void OsdDevice::Release() {
     std::cout << "OsdDevice Release" << std::endl;
 
     if (m_osd_handle != 0) {
-        // ä¾æ¬¡é”€æ¯å›¾å±‚ï¼Œå¹¶é‡Šæ”¾æ¯ä¸ªå›¾å±‚å…³è”çš„ DMA bufferã€‚
+        // ÒÀ´ÎÏú»ÙÍ¼²ã£¬²¢ÊÍ·ÅÃ¿¸öÍ¼²ã¹ØÁªµÄ DMA buffer¡£
         // destroy layer and delete dma buf
         for (int i = 0; i < OSD_LAYER_SIZE; i++) {
             osd_destroy_layer(m_osd_handle, (ssLAYER_HANDLE)i);
@@ -221,14 +222,14 @@ void OsdDevice::Release() {
 int OsdDevice::LoadLutFile(const char* filename) {
     std::cout << "[OsdDevice] Attempting to load LUT file: " << filename << std::endl;
 
-    // è‹¥é‡å¤åŠ è½½ï¼Œå…ˆé‡Šæ”¾æ—§ LUTï¼Œé¿å…æ³„æ¼
+    // ÈôÖØ¸´¼ÓÔØ£¬ÏÈÊÍ·Å¾É LUT£¬±ÜÃâĞ¹Â©
     if (m_pcolor_lut != nullptr) {
         delete[] m_pcolor_lut;
         m_pcolor_lut = nullptr;
         m_file_size = 0;
     }
 
-    // æ£€æŸ¥æ–‡ä»¶æ˜¯å¦å­˜åœ¨
+    // ¼ì²éÎÄ¼şÊÇ·ñ´æÔÚ
     struct stat file_stat;
     if (stat(filename, &file_stat) != 0) {
         std::cerr << "[OsdDevice] ERROR: File does not exist or cannot access: " << filename << std::endl;
@@ -236,7 +237,7 @@ int OsdDevice::LoadLutFile(const char* filename) {
         return -1;
     }
 
-    // æ£€æŸ¥æ–‡ä»¶å¤§å°
+    // ¼ì²éÎÄ¼ş´óĞ¡
     if (file_stat.st_size <= 0) {
         std::cerr << "[OsdDevice] ERROR: Invalid file size: " << file_stat.st_size << " bytes" << std::endl;
         return -1;
@@ -244,15 +245,15 @@ int OsdDevice::LoadLutFile(const char* filename) {
 
     std::cout << "[OsdDevice] File exists, size: " << file_stat.st_size << " bytes" << std::endl;
 
-    // æ£€æŸ¥æ–‡ä»¶æƒé™
+    // ¼ì²éÎÄ¼şÈ¨ÏŞ
     if (access(filename, R_OK) != 0) {
         std::cerr << "[OsdDevice] ERROR: No read permission for file: " << filename << std::endl;
         std::cerr << "[OsdDevice] Error code: " << errno << " (" << strerror(errno) << ")" << std::endl;
         return -1;
     }
 
-    // æ‰“å¼€æ–‡ä»¶
-    // ä»¥äºŒè¿›åˆ¶å½¢å¼æ‰“å¼€ LUT æ–‡ä»¶ã€‚
+    // ´ò¿ªÎÄ¼ş
+    // ÒÔ¶ş½øÖÆĞÎÊ½´ò¿ª LUT ÎÄ¼ş¡£
     std::ifstream file(filename, std::ios::binary | std::ios::in | std::ios::ate);
     if (!file) {
         std::cerr << "[OsdDevice] ERROR: Cannot open file: " << filename << std::endl;
@@ -260,7 +261,7 @@ int OsdDevice::LoadLutFile(const char* filename) {
         return -1;
     }
 
-    // è·å–æ–‡ä»¶å¤§å°
+    // »ñÈ¡ÎÄ¼ş´óĞ¡
     m_file_size = static_cast<int>(file.tellg());
     if (m_file_size <= 0) {
         std::cerr << "[OsdDevice] ERROR: Invalid file size from stream: " << m_file_size << " bytes" << std::endl;
@@ -268,13 +269,13 @@ int OsdDevice::LoadLutFile(const char* filename) {
         return -1;
     }
 
-    // åˆ†é…å†…å­˜å¹¶è¯»å–æ–‡ä»¶
-    // ç”³è¯·å†…å­˜å¹¶æŠŠ LUT æ•´ä½“è¯»å…¥ç¼“å­˜ã€‚
+    // ·ÖÅäÄÚ´æ²¢¶ÁÈ¡ÎÄ¼ş
+    // ÉêÇëÄÚ´æ²¢°Ñ LUT ÕûÌå¶ÁÈë»º´æ¡£
     m_pcolor_lut = new uint8_t[m_file_size];
     file.seekg(0, std::ios::beg);
     file.read((char*)m_pcolor_lut, m_file_size);
 
-    // æ£€æŸ¥æ˜¯å¦è¯»å–æˆåŠŸ
+    // ¼ì²éÊÇ·ñ¶ÁÈ¡³É¹¦
     if (static_cast<int>(file.gcount()) != m_file_size) {
         std::cerr << "[OsdDevice] ERROR: Failed to read complete file. Expected: " << m_file_size
                   << " bytes, Read: " << file.gcount() << " bytes" << std::endl;
@@ -295,13 +296,13 @@ int OsdDevice::LoadLutFile(const char* filename) {
 // draw mode: auto alloc layer
 void OsdDevice::Draw(std::vector<OsdQuadRangle> &quad_rangle) {
     if (quad_rangle.size() == 0) {
-        // è‡ªåŠ¨å›¾å±‚æ¨¡å¼ä¸‹ï¼Œç©ºè¾“å…¥è¡¨ç¤ºæ¸…ç©ºæ‰€æœ‰å›¾å±‚ã€‚
+        // ×Ô¶¯Í¼²ãÄ£Ê½ÏÂ£¬¿ÕÊäÈë±íÊ¾Çå¿ÕËùÓĞÍ¼²ã¡£
         osd_clean_all_layer(m_osd_handle);
         return;
     }
 
     for (auto &q : quad_rangle) {
-        // å…ˆæŠŠ box å˜æˆåº•å±‚éœ€è¦çš„å†…å¤–è½®å»“ï¼Œå†æäº¤ç»™ OSDã€‚
+        // ÏÈ°Ñ box ±ä³Éµ×²ãĞèÒªµÄÄÚÍâÂÖÀª£¬ÔÙÌá½»¸ø OSD¡£
         GenQrangleBox(q.box, q.border);
         COVER_ATTR_S qrangle_attr = {q.color, q.type, q.alpha, m_qrangle_out, m_qrangle_in};
         osd_add_quad_rangle(m_osd_handle, &qrangle_attr);
@@ -313,7 +314,7 @@ void OsdDevice::Draw(std::vector<OsdQuadRangle> &quad_rangle) {
 // draw mode: manual alloc layer
 void OsdDevice::Draw(std::vector<OsdQuadRangle> &quad_rangle, int layer_id) {
     if (quad_rangle.size() == 0) {
-        // æŒ‡å®šå›¾å±‚æ¨¡å¼ä¸‹ï¼Œç©ºè¾“å…¥åªæ¸…ç©ºå½“å‰å›¾å±‚ã€‚
+        // Ö¸¶¨Í¼²ãÄ£Ê½ÏÂ£¬¿ÕÊäÈëÖ»Çå¿Õµ±Ç°Í¼²ã¡£
         osd_clean_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
         LOG_DEBUG("Draw --- osd_clean_layer\n");
         return;
@@ -322,7 +323,7 @@ void OsdDevice::Draw(std::vector<OsdQuadRangle> &quad_rangle, int layer_id) {
     int ret = 0;
     for (auto &q : quad_rangle) {
         LOG_DEBUG("Draw --- q.box: %f, %f, %f, %f\n", q.box[0], q.box[1], q.box[2], q.box[3]);
-        // å°†ä¸šåŠ¡å±‚çš„ box/border è½¬æ¢æˆåº•å±‚å››è¾¹å½¢æè¿°ã€‚
+        // ½«ÒµÎñ²ãµÄ box/border ×ª»»³Éµ×²ãËÄ±ßĞÎÃèÊö¡£
         GenQrangleBox(q.box, q.border);
         COVER_ATTR_S qrangle_attr = {q.color, q.type, q.alpha, m_qrangle_out, m_qrangle_in};
         ret = osd_add_quad_rangle_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &qrangle_attr);
@@ -346,7 +347,7 @@ void OsdDevice::Draw(std::vector<std::array<float, 4>>& boxes,
 
     int ret = 0;
     for (auto &box : boxes) {
-        // è¿™ä¸ªé‡è½½åªæ¥æ”¶ bbox åæ ‡ï¼Œå› æ­¤ç»Ÿä¸€å¥—ç”¨è°ƒç”¨è€…ä¼ å…¥çš„æ ·å¼å‚æ•°ã€‚
+        // Õâ¸öÖØÔØÖ»½ÓÊÕ bbox ×ø±ê£¬Òò´ËÍ³Ò»Ì×ÓÃµ÷ÓÃÕß´«ÈëµÄÑùÊ½²ÎÊı¡£
         GenQrangleBox(box, border);
         COVER_ATTR_S qrangle_attr = {color, type, alpha, m_qrangle_out, m_qrangle_in};
         ret = osd_add_quad_rangle_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &qrangle_attr);
@@ -358,47 +359,64 @@ void OsdDevice::Draw(std::vector<std::array<float, 4>>& boxes,
 
 void OsdDevice::DrawCovers(std::vector<fdevice::COVER_ATTR_S>& covers, int layer_id) {
     if (covers.empty()) {
-        // æœ¬å¸§æ²¡æœ‰å¯è§†åŒ–å¯¹è±¡æ—¶å¿…é¡»æ¸…å±‚ï¼Œå¦åˆ™ä¸Šä¸€å¸§æ¡†å’Œéª¨æ¶ä¼šæ®‹ç•™ã€‚
+        // ±¾Ö¡Ã»ÓĞ¿ÉÊÓ»¯¶ÔÏóÊ±±ØĞëÇå²ã£¬·ñÔòÉÏÒ»Ö¡¿òºÍ¹Ç¼Ü»á²ĞÁô¡£
         osd_clean_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
         return;
     }
 
     for (auto& cover : covers) {
-        // covers å·²ç»æ˜¯åº•å±‚å›¾å…ƒç»“æ„ï¼Œç›´æ¥é€ä¼ ç»™å›¾å±‚ã€‚
+        // covers ÒÑ¾­ÊÇµ×²ãÍ¼Ôª½á¹¹£¬Ö±½ÓÍ¸´«¸øÍ¼²ã¡£
         osd_add_quad_rangle_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &cover);
     }
 
     osd_flush_quad_rangle_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
 }
 
+void OsdDevice::ClearLayer(int layer_id) {
+    if (m_osd_handle == 0) {
+        return;
+    }
+    osd_clean_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
+}
+
 /**
- * @brief ç»˜åˆ¶ä½å›¾åˆ°æŒ‡å®šå›¾å±‚
- * @note LUTåº”è¯¥åœ¨åˆå§‹åŒ–æ—¶åŠ è½½ï¼Œosd_init_deviceå¿…é¡»åœ¨åˆ›å»ºå›¾å±‚å‰è°ƒç”¨
- *       å¦‚æœåœ¨ç»˜åˆ¶æ—¶é‡æ–°åˆå§‹åŒ–ï¼Œä¼šç ´åå·²åˆ›å»ºçš„å›¾å±‚
+ * @brief »æÖÆÎ»Í¼µ½Ö¸¶¨Í¼²ã
+ * @note LUTÓ¦¸ÃÔÚ³õÊ¼»¯Ê±¼ÓÔØ£¬osd_init_device±ØĞëÔÚ´´½¨Í¼²ãÇ°µ÷ÓÃ
+ *       Èç¹ûÔÚ»æÖÆÊ±ÖØĞÂ³õÊ¼»¯£¬»áÆÆ»µÒÑ´´½¨µÄÍ¼²ã
  */
 void OsdDevice::DrawTexture(const char* bitmap_path,
                             const char* lut_path,
                             int layer_id,
                             int pos_x,
                             int pos_y,
-                            fdevice::ALPHATYPE alpha) {
-    (void)lut_path; // LUT å·²åœ¨ Initialize æ—¶åŠ è½½
-    (void)alpha;    // å½“å‰å®ç°ä»å›ºå®šä½¿ç”¨ TYPE_ALPHA100
+                            fdevice::ALPHATYPE alpha,
+                            bool flush) {
+    (void)lut_path; // LUT ÒÑÔÚ Initialize Ê±¼ÓÔØ
+    (void)alpha;    // µ±Ç°ÊµÏÖÈÔ¹Ì¶¨Ê¹ÓÃ TYPE_ALPHA100
 
-    // ä½å›¾ç»˜åˆ¶ä½¿ç”¨ BITMAP_INFO_S æè¿°æ–‡ä»¶è·¯å¾„ã€ä½ç½®å’Œé€æ˜åº¦ã€‚
+    if (m_osd_handle == 0) {
+        std::cerr << "[OsdDevice] ERROR: DrawTexture called before OSD Initialize" << std::endl;
+        return;
+    }
+    // Î»Í¼»æÖÆÊ¹ÓÃ BITMAP_INFO_S ÃèÊöÎÄ¼şÂ·¾¶¡¢Î»ÖÃºÍÍ¸Ã÷¶È¡£
     fdevice::BITMAP_INFO_S bm_info;
-    bm_info.pSSbmpFile = bitmap_path;       // ä½å›¾æ–‡ä»¶è·¯å¾„
-    bm_info.alpha = fdevice::TYPE_ALPHA100; // å½“å‰å®ç°å›ºå®šä½¿ç”¨å…¨ä¸é€æ˜
-    bm_info.position.x = pos_x;             // ä½å›¾å·¦ä¸Šè§’ x åæ ‡
-    bm_info.position.y = pos_y;             // ä½å›¾å·¦ä¸Šè§’ y åæ ‡
+    bm_info.pSSbmpFile = bitmap_path;       // Î»Í¼ÎÄ¼şÂ·¾¶
+    bm_info.alpha = fdevice::TYPE_ALPHA100; // µ±Ç°ÊµÏÖ¹Ì¶¨Ê¹ÓÃÈ«²»Í¸Ã÷
+    bm_info.position.x = pos_x;             // Î»Í¼×óÉÏ½Ç x ×ø±ê
+    bm_info.position.y = pos_y;             // Î»Í¼×óÉÏ½Ç y ×ø±ê
 
-    LOG_DEBUG("[OsdDevice] Drawing texture: %s", bitmap_path);
-    LOG_DEBUG(" at absolute position %d,%d", pos_x, pos_y);
-    LOG_DEBUG(" layer_id=%d\n", layer_id);
-    LOG_DEBUG("[OsdDevice] Bitmap file path: %s\n", bitmap_path ? bitmap_path : "NULL");
-    LOG_DEBUG("[OsdDevice] Bitmap position: %d,%d\n", bm_info.position.x, bm_info.position.y);
-    LOG_DEBUG("[OsdDevice] Bitmap alpha: %d\n", (int)bm_info.alpha);
-
+    static int s_texture_log_count = 0;
+    if (s_texture_log_count < 12) {
+        struct stat bitmap_stat;
+        const bool exists = bitmap_path != nullptr && stat(bitmap_path, &bitmap_stat) == 0;
+        std::cout << "[OsdDevice] add texture[" << s_texture_log_count << "]: path="
+                  << (bitmap_path ? bitmap_path : "NULL")
+                  << " exists=" << (exists ? 1 : 0)
+                  << " size=" << (exists ? static_cast<long>(bitmap_stat.st_size) : 0L)
+                  << " pos=(" << pos_x << "," << pos_y << ") layer=" << layer_id
+                  << std::endl;
+        ++s_texture_log_count;
+    }
     int ret = osd_add_texture_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &bm_info);
     if (ret != 0) {
         std::cerr << "[OsdDevice] ERROR: osd_add_texture_layer failed! ret=" << ret
@@ -411,8 +429,17 @@ void OsdDevice::DrawTexture(const char* bitmap_path,
         return;
     }
     LOG_DEBUG("[OsdDevice] osd_add_texture_layer succeeded\n");
+    if (flush) {
+        FlushTextureLayer(layer_id);
+    }
+}
 
-    ret = osd_flush_texture_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
+void OsdDevice::FlushTextureLayer(int layer_id) {
+    if (m_osd_handle == 0) {
+        return;
+    }
+
+    const int ret = osd_flush_texture_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
     if (ret != 0) {
         std::cerr << "[OsdDevice] ERROR: osd_flush_texture_layer failed! ret=" << ret
                   << ", layer_id=" << layer_id << std::endl;
@@ -423,14 +450,14 @@ void OsdDevice::DrawTexture(const char* bitmap_path,
         std::cerr << "[OsdDevice]   4. Layer region object encoding failed" << std::endl;
         std::cerr << "[OsdDevice]   5. Layer not enabled" << std::endl;
     } else {
-        LOG_DEBUG("[OsdDevice] Texture drawn successfully\n");
+        LOG_DEBUG("[OsdDevice] Texture layer flushed successfully\n");
     }
 }
 
 void OsdDevice::GenQrangleBox(std::array<float, 4>& det, int border) {
-    // box[0..7]  å¯¹åº”å†…è½®å»“ 4 ä¸ªç‚¹
-    // box[8..15] å¯¹åº”å¤–è½®å»“ 4 ä¸ªç‚¹
-    // äºŒè€…ä¸€èµ·ç”¨äºæè¿°ç©ºå¿ƒæ¡†çš„è¾¹ç•ŒåŒºåŸŸã€‚
+    // box[0..7]  ¶ÔÓ¦ÄÚÂÖÀª 4 ¸öµã
+    // box[8..15] ¶ÔÓ¦ÍâÂÖÀª 4 ¸öµã
+    // ¶şÕßÒ»ÆğÓÃÓÚÃèÊö¿ÕĞÄ¿òµÄ±ß½çÇøÓò¡£
     std::array<int, 16> box;
 
     box[0]  = std::min(m_width,  std::max(0, int(det[0] + border)));
