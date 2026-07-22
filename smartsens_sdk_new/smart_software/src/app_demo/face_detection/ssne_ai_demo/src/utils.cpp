@@ -1,4 +1,4 @@
-/*
+﻿/*
  * @Filename: utils.cpp
  * @Author: Hongying He
  * @Email: hongying.he@smartsenstech.com
@@ -18,8 +18,8 @@
 namespace utils {
 
 /**
- * @brief 归并排序的合并操�? * @param result 人脸/目标检测结果结构体指针
- * @param low 合并区间的起始索�? * @param mid 合并区间的中间索�? * @param high 合并区间的结束索�? * @description 将两个已排序的子数组合并成一个有序数组，按照分数从高到低排序
+ * @brief 褰掑苟鎺掑簭鐨勫悎骞舵搷浣? * @param result 浜鸿劯/鐩爣妫€娴嬬粨鏋滅粨鏋勪綋鎸囬拡
+ * @param low 鍚堝苟鍖洪棿鐨勮捣濮嬬储寮? * @param mid 鍚堝苟鍖洪棿鐨勪腑闂寸储寮? * @param high 鍚堝苟鍖洪棿鐨勭粨鏉熺储寮? * @description 灏嗕袱涓凡鎺掑簭鐨勫瓙鏁扮粍鍚堝苟鎴愪竴涓湁搴忔暟缁勶紝鎸夌収鍒嗘暟浠庨珮鍒颁綆鎺掑簭
  */
 void Merge(FaceDetectionResult* result, size_t low, size_t mid, size_t high) {
   std::vector<PoseDetection>& detections = result->detections;
@@ -78,9 +78,9 @@ void Merge(FaceDetectionResult* result, size_t low, size_t mid, size_t high) {
 }
 
 /**
- * @brief 归并排序递归函数
- * @param result 检测结果结构体指针
- * @param low 排序区间的起始索�? * @param high 排序区间的结束索�? */
+ * @brief 褰掑苟鎺掑簭閫掑綊鍑芥暟
+ * @param result 妫€娴嬬粨鏋滅粨鏋勪綋鎸囬拡
+ * @param low 鎺掑簭鍖洪棿鐨勮捣濮嬬储寮? * @param high 鎺掑簭鍖洪棿鐨勭粨鏉熺储寮? */
 void MergeSort(FaceDetectionResult* result, size_t low, size_t high) {
   if (low < high) {
     size_t mid = (high - low) / 2 + low;
@@ -91,8 +91,8 @@ void MergeSort(FaceDetectionResult* result, size_t low, size_t high) {
 }
 
 /**
- * @brief 对检测结果进行排�? * @param result 检测结果结构体指针
- * @description 按照检测分数从高到低对检测结果进行排�? */
+ * @brief 瀵规娴嬬粨鏋滆繘琛屾帓搴? * @param result 妫€娴嬬粨鏋滅粨鏋勪綋鎸囬拡
+ * @description 鎸夌収妫€娴嬪垎鏁颁粠楂樺埌浣庡妫€娴嬬粨鏋滆繘琛屾帓搴? */
 void SortDetectionResult(FaceDetectionResult* result) {
   size_t low = 0;
   size_t high = result->scores.size();
@@ -104,10 +104,10 @@ void SortDetectionResult(FaceDetectionResult* result) {
 }
 
 /**
- * @brief 非极大值抑制（NMS）算�? * @param result 检测结果结构体指针
- * @param iou_threshold IoU阈�? * @param top_k 保留前k个检测结�? *
+ * @brief 闈炴瀬澶у€兼姂鍒讹紙NMS锛夌畻娉? * @param result 妫€娴嬬粨鏋滅粨鏋勪綋鎸囬拡
+ * @param iou_threshold IoU闃堝€? * @param top_k 淇濈暀鍓峩涓娴嬬粨鏋? *
  * @note
- * 这版保留�?class_ids 的同步处理�? * 这个函数即使暂时不用，但是保留可编译状态�? */
+ * 杩欑増淇濈暀浜?class_ids 鐨勫悓姝ュ鐞嗐€? * 杩欎釜鍑芥暟鍗充娇鏆傛椂涓嶇敤锛屼絾鏄繚鐣欏彲缂栬瘧鐘舵€併€? */
 void NMS(FaceDetectionResult* result, float iou_threshold, int top_k) {
   SortDetectionResult(result);
 
@@ -131,7 +131,7 @@ void NMS(FaceDetectionResult* result, float iou_threshold, int top_k) {
         continue;
       }
 
-      // 同类 NMS：只有类别相同才比较抑制
+      // 鍚岀被 NMS锛氬彧鏈夌被鍒浉鍚屾墠姣旇緝鎶戝埗
       if (result->class_ids[i] != result->class_ids[j]) {
         continue;
       }
@@ -175,7 +175,7 @@ void NMS(FaceDetectionResult* result, float iou_threshold, int top_k) {
 
 
 /**
- * @brief 释放 FaceDetectionResult 的内�? * @description 使用 swap 技巧释�?vector 占用的内�? */
+ * @brief 閲婃斁 FaceDetectionResult 鐨勫唴瀛? * @description 浣跨敤 swap 鎶€宸ч噴鏀?vector 鍗犵敤鐨勫唴瀛? */
 void FaceDetectionResult::Free() {
   std::vector<PoseDetection>().swap(detections);
   std::vector<std::array<float, 4>>().swap(boxes);
@@ -185,7 +185,7 @@ void FaceDetectionResult::Free() {
 }
 
 /**
- * @brief 清空 FaceDetectionResult 的内�? * @description 清空所有检测框、分数、类别和关键点，但保留内存分�? */
+ * @brief 娓呯┖ FaceDetectionResult 鐨勫唴瀹? * @description 娓呯┖鎵€鏈夋娴嬫銆佸垎鏁般€佺被鍒拰鍏抽敭鐐癸紝浣嗕繚鐣欏唴瀛樺垎閰? */
 void FaceDetectionResult::Clear() {
   detections.clear();
   boxes.clear();
@@ -195,7 +195,7 @@ void FaceDetectionResult::Clear() {
 }
 
 /**
- * @brief 预分配内存空�? * @param size 要保留的元素数量
+ * @brief 棰勫垎閰嶅唴瀛樼┖闂? * @param size 瑕佷繚鐣欑殑鍏冪礌鏁伴噺
  */
 void FaceDetectionResult::Reserve(int size) {
   detections.reserve(size);
@@ -206,7 +206,7 @@ void FaceDetectionResult::Reserve(int size) {
 }
 
 /**
- * @brief 调整 FaceDetectionResult 的大�? * @param size 新的元素数量
+ * @brief 璋冩暣 FaceDetectionResult 鐨勫ぇ灏? * @param size 鏂扮殑鍏冪礌鏁伴噺
  */
 void FaceDetectionResult::Resize(int size) {
   detections.resize(size);
@@ -217,7 +217,7 @@ void FaceDetectionResult::Resize(int size) {
 }
 
 /**
- * @brief FaceDetectionResult 的拷贝构造函�? * @param res 要拷贝的 FaceDetectionResult 对象
+ * @brief FaceDetectionResult 鐨勬嫹璐濇瀯閫犲嚱鏁? * @param res 瑕佹嫹璐濈殑 FaceDetectionResult 瀵硅薄
  */
 FaceDetectionResult::FaceDetectionResult(const FaceDetectionResult& res) {
   detections.assign(res.detections.begin(), res.detections.end());
@@ -320,6 +320,18 @@ bool IsAlertClass(int class_id) {
     return class_id == kClassMouse ||
            class_id == kClassSnake ||
            class_id == kClassFire;
+}
+
+int GetFaceIdentityColorIndex(FaceIdentity identity) {
+    switch (identity) {
+        case FaceIdentity::kKnown:
+            return kBoxColor;
+        case FaceIdentity::kStranger:
+            return kAlertColor;
+        case FaceIdentity::kUnknown:
+        default:
+            return kRightColor;
+    }
 }
 
 int GetDetectionColorIndex(const ObjectDetection& det) {
@@ -627,7 +639,7 @@ void DrawNumberBitmaps(VISUALIZER* visualizer,
 
 
 /**
- * @brief OSD 可视化器初始化函�? * @param in_img_shape 图像尺寸 [宽度, 高度]
+ * @brief OSD 鍙鍖栧櫒鍒濆鍖栧嚱鏁? * @param in_img_shape 鍥惧儚灏哄 [瀹藉害, 楂樺害]
  */
 void VISUALIZER::Initialize(std::array<int, 2>& in_img_shape, const std::string& bitmap_lut_path) {
     m_width = in_img_shape[0];
@@ -651,7 +663,7 @@ void VISUALIZER::Initialize(std::array<int, 2>& in_img_shape, const std::string&
 
 
 /**
- * @brief 绘制测试矩形框（用于测试 OSD 功能�? */
+ * @brief 缁樺埗娴嬭瘯鐭╁舰妗嗭紙鐢ㄤ簬娴嬭瘯 OSD 鍔熻兘锛? */
 void VISUALIZER::Draw() {
     std::vector<sst::device::osd::OsdQuadRangle> quad_rangle_vec;
 
@@ -668,8 +680,8 @@ void VISUALIZER::Draw() {
 }
 
 /**
- * @brief 根据检测框绘制 OSD 矩形
- * @param boxes 检测框向量，每个元素为[xmin, ymin, xmax, ymax]
+ * @brief 鏍规嵁妫€娴嬫缁樺埗 OSD 鐭╁舰
+ * @param boxes 妫€娴嬫鍚戦噺锛屾瘡涓厓绱犱负[xmin, ymin, xmax, ymax]
  */
 void VISUALIZER::Draw(const std::vector<std::array<float, 4>>& boxes) {
     std::vector<sst::device::osd::OsdQuadRangle> quad_rangle_vec;
@@ -708,6 +720,55 @@ void VISUALIZER::Draw(const std::vector<ObjectDetection>& detections) {
         covers.emplace_back(MakeHollowBoxCover(det.box, border, GetDetectionColorIndex(det)));
         if (IsAlertClass(det.class_id)) {
             AppendWarningIconCovers(det.box, &covers);
+        }
+    }
+
+    osd_device.DrawCovers(covers, DETECTION_LAYER_ID);
+}
+
+void VISUALIZER::Draw(const FaceResult& face_result) {
+    std::vector<fdevice::COVER_ATTR_S> covers;
+    covers.reserve(static_cast<size_t>(std::max(face_result.count, 0)) * 5U);
+
+    for (int i = 0; i < face_result.count; ++i) {
+        const FaceDetection& det = face_result.faces[i];
+        if (det.identity == FaceIdentity::kUnknown) {
+            continue;
+        }
+        const std::array<float, 4> box = {
+            det.x,
+            det.y,
+            det.x + det.w,
+            det.y + det.h
+        };
+        const int color = GetFaceIdentityColorIndex(det.identity);
+        const int border = det.identity == FaceIdentity::kStranger ? 5 : 3;
+        covers.emplace_back(MakeHollowBoxCover(box, border, color));
+
+        const float badge_left = std::max(0.0f, box[0] - 26.0f);
+        const float badge_top = std::max(0.0f, box[1] - 26.0f);
+        covers.emplace_back(
+            MakeSolidRectCover(badge_left, badge_top,
+                               badge_left + 20.0f, badge_top + 20.0f, color));
+
+        if (det.identity == FaceIdentity::kKnown) {
+            covers.emplace_back(
+                MakeSolidRectCover(badge_left + 4.0f, badge_top + 4.0f,
+                                   badge_left + 8.0f, badge_top + 16.0f, kPointColor));
+            covers.emplace_back(
+                MakeSolidRectCover(badge_left + 12.0f, badge_top + 4.0f,
+                                   badge_left + 16.0f, badge_top + 16.0f, kPointColor));
+        } else if (det.identity == FaceIdentity::kStranger) {
+            covers.emplace_back(
+                MakeSolidRectCover(badge_left + 8.0f, badge_top + 4.0f,
+                                   badge_left + 12.0f, badge_top + 12.0f, kPointColor));
+            covers.emplace_back(
+                MakeSolidRectCover(badge_left + 8.0f, badge_top + 14.0f,
+                                   badge_left + 12.0f, badge_top + 16.0f, kPointColor));
+        } else {
+            covers.emplace_back(
+                MakeSolidRectCover(badge_left + 5.0f, badge_top + 8.0f,
+                                   badge_left + 15.0f, badge_top + 12.0f, kPointColor));
         }
     }
 
@@ -892,7 +953,7 @@ void VISUALIZER::DrawPose(cv::Mat& image,
 #endif
 
 /**
- * @brief 释放 OSD 可视化器资源
+ * @brief 閲婃斁 OSD 鍙鍖栧櫒璧勬簮
  */
 void VISUALIZER::Release() {
     osd_device.Release();
@@ -944,10 +1005,10 @@ void VISUALIZER::DrawSnakeGame(const SnakeRenderData& game) {
     osd_device.ClearLayer(kSnakeGraphicLayerId);
     osd_device.ClearLayer(kSnakeBitmapLayerId);
 
-    const float board_left = static_cast<float>(ScaleDesignX(m_width, 860.0f));
-    const float board_top = static_cast<float>(ScaleDesignY(m_height, 276.0f));
-    const float board_width = static_cast<float>(ScaleDesignX(m_width, 960.0f));
-    const float board_height = static_cast<float>(ScaleDesignY(m_height, 528.0f));
+    const float board_left = static_cast<float>(ScaleDesignX(m_width, 1260.0f));
+    const float board_top = static_cast<float>(ScaleDesignY(m_height, 250.0f));
+    const float board_width = static_cast<float>(ScaleDesignX(m_width, 640.0f));
+    const float board_height = static_cast<float>(ScaleDesignY(m_height, 560.0f));
     const float cell_w = board_width / static_cast<float>(game.board_cols);
     const float cell_h = board_height / static_cast<float>(game.board_rows);
     const float sprite_half = static_cast<float>(kSnakeSpriteCanvasSize) * 0.5f;
@@ -988,7 +1049,6 @@ void VISUALIZER::DrawSnakeGame(const SnakeRenderData& game) {
                    kSnakeBitmapLayerId,
                    false);
     }
-
 
     const std::string gesture_bitmap = GestureBitmapPath(game.last_command);
     if (!gesture_bitmap.empty()) {

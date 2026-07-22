@@ -274,6 +274,107 @@ void LogTensorSummary(const char* prefix, ssne_tensor_t tensor) {
              get_data(tensor));
 }
 
+uint32_t TensorFnv1a32(ssne_tensor_t tensor) {
+    const uint8_t* data = static_cast<const uint8_t*>(get_data(tensor));
+    const size_t size = get_mem_size(tensor);
+    if (data == nullptr || size == 0U) {
+        return 0U;
+    }
+
+    uint32_t hash = 2166136261U;
+    for (size_t i = 0; i < size; ++i) {
+        hash ^= static_cast<uint32_t>(data[i]);
+        hash *= 16777619U;
+    }
+    return hash;
+}
+
+void LogTensorFingerprint(const char* prefix, ssne_tensor_t tensor) {
+    const uint8_t* data = static_cast<const uint8_t*>(get_data(tensor));
+    const size_t size = get_mem_size(tensor);
+    if (data == nullptr || size == 0U) {
+        LOG_WARN("%s fingerprint unavailable\n", prefix != nullptr ? prefix : "tensor");
+        return;
+    }
+
+    const uint8_t b0 = size > 0U ? data[0] : 0U;
+    const uint8_t b1 = size > 1U ? data[1] : 0U;
+    const uint8_t b2 = size > 2U ? data[2] : 0U;
+    const uint8_t b3 = size > 3U ? data[3] : 0U;
+    const uint8_t b4 = size > 4U ? data[4] : 0U;
+    const uint8_t b5 = size > 5U ? data[5] : 0U;
+    const uint8_t b6 = size > 6U ? data[6] : 0U;
+    const uint8_t b7 = size > 7U ? data[7] : 0U;
+    LOG_INFO("%s fingerprint: fnv32=0x%08x mem=%zu first8=[%u %u %u %u %u %u %u %u]\n",
+             prefix != nullptr ? prefix : "tensor",
+             TensorFnv1a32(tensor),
+             size,
+             static_cast<unsigned int>(b0),
+             static_cast<unsigned int>(b1),
+             static_cast<unsigned int>(b2),
+             static_cast<unsigned int>(b3),
+             static_cast<unsigned int>(b4),
+             static_cast<unsigned int>(b5),
+             static_cast<unsigned int>(b6),
+             static_cast<unsigned int>(b7));
+}
+
+void LogGestureOutputPreview(ssne_tensor_t tensor) {
+    if (!IsValidTensor(tensor) || get_total_size(tensor) < 5U) {
+        LOG_WARN("gesture output preview unavailable: invalid tensor or total=%u\n",
+                 get_total_size(tensor));
+        return;
+    }
+
+    const uint8_t dtype = get_data_type(tensor);
+    const void* data = get_data(tensor);
+    const uint32_t total = get_total_size(tensor);
+    if (data == nullptr) {
+        LOG_WARN("gesture output preview unavailable: null data\n");
+        return;
+    }
+
+    if (dtype == SSNE_FLOAT32) {
+        const float* ptr = reinterpret_cast<const float*>(data);
+        LOG_INFO("gesture output preview: decode=float32 total=%u order=[down,left,right,up,none] logits5=[%.6f %.6f %.6f %.6f %.6f]\n",
+                 total,
+                 ptr[0],
+                 ptr[1],
+                 ptr[2],
+                 ptr[3],
+                 ptr[4]);
+        return;
+    }
+
+    if (dtype == SSNE_INT8) {
+        const int8_t* ptr = reinterpret_cast<const int8_t*>(data);
+        LOG_INFO("gesture output preview: decode=int8_raw total=%u order=[down,left,right,up,none] logits5=[%d %d %d %d %d] note=check SDK quant scale if this is not float32\n",
+                 total,
+                 static_cast<int>(ptr[0]),
+                 static_cast<int>(ptr[1]),
+                 static_cast<int>(ptr[2]),
+                 static_cast<int>(ptr[3]),
+                 static_cast<int>(ptr[4]));
+        return;
+    }
+
+    if (dtype == SSNE_UINT8) {
+        const uint8_t* ptr = reinterpret_cast<const uint8_t*>(data);
+        LOG_INFO("gesture output preview: decode=uint8_raw total=%u order=[down,left,right,up,none] logits5=[%u %u %u %u %u] note=check SDK quant scale/zero point if this is not float32\n",
+                 total,
+                 static_cast<unsigned int>(ptr[0]),
+                 static_cast<unsigned int>(ptr[1]),
+                 static_cast<unsigned int>(ptr[2]),
+                 static_cast<unsigned int>(ptr[3]),
+                 static_cast<unsigned int>(ptr[4]));
+        return;
+    }
+
+    LOG_WARN("gesture output preview unsupported dtype=%s(%d)\n",
+             SsneDataTypeName(dtype),
+             static_cast<int>(dtype));
+}
+
 void ReleaseOutputTensors(ssne_tensor_t* outputs, int count) {
     if (outputs == nullptr) {
         return;
@@ -409,12 +510,12 @@ bool CropYuv422Tensor(ssne_tensor_t input, const CropRoi& roi, ssne_tensor_t* cr
     return true;
 }
 
-bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) {
+bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 5>* values) {
     if (values == nullptr || !IsValidTensor(tensor)) {
         return false;
     }
 
-    if (get_total_size(tensor) < 4U) {
+    if (get_total_size(tensor) < 5U) {
         return false;
     }
 
@@ -424,7 +525,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             (*values)[static_cast<size_t>(i)] = ptr[i];
         }
         return true;
@@ -435,7 +536,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             (*values)[static_cast<size_t>(i)] = static_cast<float>(ptr[i]);
         }
         return true;
@@ -446,7 +547,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             (*values)[static_cast<size_t>(i)] = static_cast<float>(ptr[i]);
         }
         return true;
@@ -526,12 +627,20 @@ float Sigmoid(float value) {
     return exp_pos / (1.0f + exp_pos);
 }
 
-std::array<float, 4> SigmoidScores4(const std::array<float, 4>& logits) {
-    std::array<float, 4> scores = {0.0f, 0.0f, 0.0f, 0.0f};
-    for (int i = 0; i < 4; ++i) {
-        scores[static_cast<size_t>(i)] = Sigmoid(logits[static_cast<size_t>(i)]);
+GestureCommand GestureClassIndexToCommand(int class_index) {
+    // Model output order is [down, left, right, up, none].
+    switch (class_index) {
+        case 0:
+            return GestureCommand::TD;
+        case 1:
+            return GestureCommand::TL;
+        case 2:
+            return GestureCommand::TR;
+        case 3:
+            return GestureCommand::TU;
+        default:
+            return GestureCommand::NONE;
     }
-    return scores;
 }
 
 }  // namespace
@@ -625,7 +734,7 @@ void GestureClassifier::Initialize(std::string& model_path,
     if (normalize_enabled) {
         SetNormalize(pipe_offline, model_id);
     } else {
-        LOG_WARN("gesture normalize disabled for debug\n");
+        LOG_WARN("gesture SetNormalize disabled: use raw SDK resize/color conversion path for mobilenet preprocess check\n");
     }
 
     const uint32_t det_width = static_cast<uint32_t>(det_shape[0]);
@@ -678,6 +787,7 @@ void GestureClassifier::SetFocusBox(const std::array<float, 4>* in_focus_box) {
 }
 
 void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float conf_threshold) {
+    (void)conf_threshold;
     if (result == nullptr) {
         LOG_ERROR("gesture predict got null result pointer\n");
         return;
@@ -700,41 +810,22 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
         logged_runtime_input = true;
     }
 
-    const CropRoi roi = BuildGestureRoi(focus_valid ? &focus_box : nullptr, img_shape);
-    ssne_tensor_t cropped = ssne_tensor_t{};
-    ssne_tensor_t preprocess_img = *img;
-    bool use_roi = false;
-
-    if (roi.IsValid() && CropYuv422Tensor(*img, roi, &cropped)) {
-        preprocess_img = cropped;
-        use_roi = true;
-    }
-
     static bool logged_roi_info = false;
     if (!logged_roi_info) {
-        LOG_INFO("gesture roi: use_roi=%d focus_valid=%d box=[%.1f,%.1f,%.1f,%.1f] roi=[l=%d t=%d r=%d b=%d w=%d h=%d]\n",
-                 use_roi ? 1 : 0,
+        LOG_INFO("gesture roi: manual_crop=0 official_preprocess=1 focus_valid=%d configured_img=[%d,%d] runtime_img=[%u,%u] box_crop=[%.1f,%.1f,%.1f,%.1f] note=RunAiPreprocessPipe consumes source tensor directly like RPS demo\n",
                  focus_valid ? 1 : 0,
+                 img_shape[0],
+                 img_shape[1],
+                 get_width(*img),
+                 get_height(*img),
                  focus_box[0],
                  focus_box[1],
                  focus_box[2],
-                 focus_box[3],
-                 roi.left,
-                 roi.top,
-                 roi.right,
-                 roi.bottom,
-                 roi.Width(),
-                 roi.Height());
-        if (use_roi) {
-            LogTensorSummary("gesture cropped", preprocess_img);
-        }
+                 focus_box[3]);
         logged_roi_info = true;
     }
 
-    const int preprocess_ret = RunAiPreprocessPipe(pipe_offline, preprocess_img, inputs[0]);
-    if (use_roi) {
-        release_tensor(cropped);
-    }
+    const int preprocess_ret = RunAiPreprocessPipe(pipe_offline, *img, inputs[0]);
     static bool logged_preprocess_output = false;
     if (!logged_preprocess_output) {
         LOG_INFO("gesture preprocess ret=%d\n", preprocess_ret);
@@ -745,11 +836,17 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
         LOG_ERROR("gesture preprocess failed, ret=%d\n", preprocess_ret);
         return;
     }
+
+    int dtype = -1;
+    ssne_get_model_input_dtype(model_id, &dtype);
+    set_data_type(inputs[0], dtype);
+
     static int preprocessed_frame_count = 0;
     static int dumped_input_frames = 0;
     const bool dump_numbered_snapshot = dumped_input_frames < 5;
     const bool refresh_latest_snapshot = (preprocessed_frame_count % 45) == 0;
     if (dump_numbered_snapshot || refresh_latest_snapshot) {
+        LogTensorFingerprint("gesture model input(after preprocess)", inputs[0]);
         if (GestureTensorDebugEnabled()) {
             LogTensorPixelSummary("gesture model input(after preprocess)", SummarizeTensorPixels(inputs[0]));
         }
@@ -796,37 +893,43 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
     static bool logged_output_tensor = false;
     if (!logged_output_tensor) {
         LogTensorSummary("gesture output[0]", outputs[0]);
+        LogGestureOutputPreview(outputs[0]);
         logged_output_tensor = true;
     }
 
-    std::array<float, 4> logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 5> logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     if (!CopyOutputToFloatArray(outputs[0], &logits)) {
-        LOG_ERROR("gesture output decode failed: output[0] is not a 4-logit tensor\n");
+        LOG_ERROR("gesture output decode failed: output[0] is not a 5-logit tensor\n");
         return;
     }
 
-    const std::array<float, 4> scores = SigmoidScores4(logits);
+    std::array<float, 5> scores = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < 5; ++i) {
+        scores[static_cast<size_t>(i)] =
+            Sigmoid(logits[static_cast<size_t>(i)]);
+    }
+
     int best_index = 0;
     for (int i = 1; i < 4; ++i) {
         if (scores[static_cast<size_t>(i)] > scores[static_cast<size_t>(best_index)]) {
             best_index = i;
         }
     }
-    float second_score = 0.0f;
-    for (int i = 0; i < 4; ++i) {
-        if (i != best_index) {
-            second_score = std::max(second_score, scores[static_cast<size_t>(i)]);
-        }
-    }
 
     result->logits = logits;
     result->probabilities = scores;
     result->confidence = scores[static_cast<size_t>(best_index)];
-    const float margin = result->confidence - second_score;
-    result->valid = result->confidence >= conf_threshold && margin >= 0.10f;
-    if (result->valid) {
-        result->command = static_cast<GestureCommand>(best_index + 1);
-    } else {
+    const float none_score = scores[4];
+    if (none_score >= conf_threshold && none_score >= result->confidence) {
+        result->command = GestureCommand::NONE;
+        result->valid = false;
+        return;
+    }
+
+    result->valid = result->confidence >= conf_threshold;
+    result->command = result->valid ?
+        GestureClassIndexToCommand(best_index) : GestureCommand::NONE;
+    if (!result->valid) {
         result->command = GestureCommand::NONE;
     }
 }

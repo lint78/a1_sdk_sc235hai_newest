@@ -21,8 +21,8 @@ struct GestureResult {
     GestureCommand command = GestureCommand::NONE;
     bool valid = false;
     float confidence = 0.0f;
-    std::array<float, 4> probabilities = {0.0f, 0.0f, 0.0f, 0.0f};
-    std::array<float, 4> logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 5> probabilities = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 5> logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 class GestureClassifier {

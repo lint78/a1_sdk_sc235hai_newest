@@ -9,6 +9,7 @@
 
 #include "common.hpp"
 #include "companion_mode.hpp"
+#include "face_business.h"
 #include "osd-device.hpp"
 
 #include <algorithm>
@@ -38,6 +39,7 @@ public:
     void Draw();
     void Draw(const std::vector<std::array<float, 4>>& boxes);
     void Draw(const std::vector<ObjectDetection>& detections);
+    void Draw(const FaceResult& face_result);
     void Draw(const std::vector<PoseDetection>& detections,
               float kpt_conf_threshold = 0.5f);
     void Draw(const std::vector<ObjectDetection>& detections,
