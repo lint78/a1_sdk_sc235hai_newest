@@ -9,7 +9,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -O2")
 # 核心：禁用ABI变更提示
 add_compile_options(-Wno-psabi)
 option(SSNE_AI_DEMO_ENABLE_OPENCV "Enable OpenCV pose visualization helpers" OFF)
-option(SSNE_AI_DEMO_ENABLE_A1_UART "Enable board UART transport for face business adapter" OFF)
+option(SSNE_AI_DEMO_ENABLE_A1_UART "Enable board UART transport for alarm reporter" ON)
 
 # add_executable(ssne_ai_demo ${PROJECT_SOURCE_DIR}/online_ped_osd_thread.cpp)
 # add_executable(ssne_ai_demo ${PROJECT_SOURCE_DIR}/online_ped_osd.cpp)
@@ -47,6 +47,7 @@ target_link_libraries(${PROJECT_NAME}
 
 if(SSNE_AI_DEMO_ENABLE_A1_UART)
     target_compile_definitions(${PROJECT_NAME} PRIVATE SSNE_AI_DEMO_ENABLE_A1_UART)
+    target_link_libraries(${PROJECT_NAME} ${M1_UART_LIB})
 endif()
 
 if(SSNE_AI_DEMO_ENABLE_OPENCV)

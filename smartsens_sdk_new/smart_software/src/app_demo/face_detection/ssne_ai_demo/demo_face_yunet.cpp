@@ -32,9 +32,12 @@ using namespace std;
 
 namespace {
 
-constexpr float kDetectConfThreshold = 0.35f;
-constexpr float kDetectPersonConfThreshold = 0.30f;
+constexpr float kDetectFallbackConfThreshold = 0.35f;
+constexpr float kDetectTemporalPersonConfThreshold = 0.33f;
 constexpr float kDetectPoseAssistPersonConfThreshold = 0.24f;
+constexpr std::array<float, 7> kDetectClassThresholds = {
+    0.35f, 0.35f, 0.35f, 0.35f, 0.33f, 0.35f, 0.33f
+};
 constexpr float kPoseConfThreshold = 0.25f;
 constexpr float kPoseDrawKptConfThreshold = 0.40f;
 constexpr float kForcePoseDrawKptConfThreshold = 0.50f;
@@ -728,7 +731,7 @@ bool HandleDemoCommand(const std::string& line) {
         cmd == "face stranger" || cmd == "mode stranger" || cmd == "mode face" ||
         cmd == "mode stranger_face" || cmd == "mode stranger-face") {
         SetDemoMode(DemoMode::STRANGER_FACE);
-        std::cout << "Switched to stranger face mode (640x640 YuNet raw-head model)." << std::endl;
+        std::cout << "Switched to stranger face mode (MobileFaceNet RGB112 identity model)." << std::endl;
         return true;
     }
     if (cmd == "snake reset" || cmd == "game reset") {
@@ -1124,6 +1127,8 @@ int main() {
             return;
         }
         detect_detector.Initialize(detect_model_path, &crop_shape, &detect_shape, 300, kDetectNumClasses);
+        detect_detector.SetClassThresholds(kDetectClassThresholds);
+        detect_detector.SetTemporalPersonConfThreshold(kDetectTemporalPersonConfThreshold);
         pose_detector.Initialize(pose_model_path, &crop_shape, &pose_shape, true, 300);
         guard_models_initialized = true;
         LOG_INFO("guard mode models initialized\n");
@@ -1503,7 +1508,7 @@ int main() {
                     BestFaceScoreByIdentity(stranger_face_result, FaceIdentity::kStranger);
                 const float unknown_best =
                     BestFaceScoreByIdentity(stranger_face_result, FaceIdentity::kUnknown);
-                LOG_INFO("serial mode=stranger faces=%d known=%d stranger=%d unknown=%d best=%.3f known_best=%.3f stranger_best=%.3f unknown_best=%.3f status=%s model=%s ret=%d\n",
+                LOG_INFO("serial mode=stranger faces=%d known=%d stranger=%d unknown=%d best=%.3f known_best=%.3f stranger_best=%.3f unknown_best=%.3f sim=%.3f instant=%d confirmed=%d vote=%d/%d rec_ret=%d status=%s model=%s ret=%d\n",
                          stranger_face_result.count,
                          known_count,
                          stranger_count,
@@ -1512,6 +1517,12 @@ int main() {
                          known_best,
                          stranger_best,
                          unknown_best,
+                         stranger_mode_runner.LastSimilarity(),
+                         stranger_mode_runner.LastInstantOwner() ? 1 : 0,
+                         stranger_mode_runner.LastConfirmedOwner() ? 1 : 0,
+                         stranger_mode_runner.LastVotePassCount(),
+                         stranger_mode_runner.LastVoteSampleCount(),
+                         stranger_mode_runner.LastRecognizeStatus(),
                          stranger_mode_runner.LastError().c_str(),
                          stranger_mode_runner.ModelPath().c_str(),
                          stranger_ret);
@@ -1566,9 +1577,9 @@ int main() {
             const float active_person_detect_threshold =
                 frame_index < pose_assist_detect_until ?
                 kDetectPoseAssistPersonConfThreshold :
-                kDetectPersonConfThreshold;
+                -1.0f;
             detect_detector.Predict(&img_sensor, &detect_result,
-                                    kDetectConfThreshold,
+                                    kDetectFallbackConfThreshold,
                                     active_person_detect_threshold);
             const auto detect_end = clock::now();
             detect_ms = static_cast<double>(

@@ -9,6 +9,8 @@
 #include <string>
 #include <vector>
 
+#include "a1_uart_sink.hpp"
+
 enum class EventType {
     FALL = 0,
     INTRUSION = 1,
@@ -36,6 +38,11 @@ private:
     std::time_t NowLocked() const;
     void SetCalibratedTimeLocked(std::time_t calibrated_time);
     void RecordStartLocked(EventType type, uint64_t frame_index);
+    void RecordEndLocked(EventType type, uint64_t frame_index);
+    void EnsureAlarmUartLocked();
+    void SendAlarmLineLocked(EventType type,
+                             const char* state,
+                             uint64_t frame_index);
     void PrintHelp() const;
     void PrintTimeLocked() const;
     void PrintEventsLocked() const;
@@ -59,4 +66,7 @@ private:
     mutable bool m_time_calibration_loaded = false;
     mutable bool m_time_calibrated = false;
     mutable int64_t m_time_offset_seconds = 0;
+    bool m_alarm_uart_ready = false;
+    bool m_alarm_uart_failed = false;
+    A1UartSink m_alarm_uart_sink;
 };

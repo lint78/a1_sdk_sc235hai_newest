@@ -121,6 +121,8 @@ class YOLOV8NANO {
   void Predict(ssne_tensor_t* img_in, ObjectDetectionResult* result,
                float conf_threshold = 0.25f,
                float person_conf_threshold = -1.0f);
+  void SetClassThresholds(const std::array<float, 7>& thresholds);
+  void SetTemporalPersonConfThreshold(float threshold);
   void Initialize(std::string& model_path, std::array<int, 2>* in_img_shape,
                   std::array<int, 2>* in_det_shape, int in_box_len,
                   int in_num_classes = 7);
@@ -143,4 +145,8 @@ class YOLOV8NANO {
   ssne_tensor_t inputs[1] = {};
   ssne_tensor_t outputs[6] = {};
   AiPreprocessPipe pipe_offline = GetAIPreprocessPipe();
+  std::array<float, 7> class_thresholds_ = {
+      0.35f, 0.35f, 0.35f, 0.35f, 0.33f, 0.35f, 0.33f
+  };
+  float temporal_person_conf_threshold_ = 0.33f;
 };

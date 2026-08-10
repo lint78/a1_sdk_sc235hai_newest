@@ -1,5 +1,7 @@
 #pragma once
 
-// The deployed board asset keeps this filename even when the model internals change.
+// Keep these deployment filenames aligned with the board-side asset directory.
 constexpr const char* kStrangerFaceModelName =
-    "yunet_stranger_face_224x224_rawheads.m1model";
+    "a1_face_relation_rawfeat_rgb112.m1model";
+constexpr const char* kStrangerFaceOwnerTemplateName =
+    "di_jiaao_owner_template_512_f32.bin";

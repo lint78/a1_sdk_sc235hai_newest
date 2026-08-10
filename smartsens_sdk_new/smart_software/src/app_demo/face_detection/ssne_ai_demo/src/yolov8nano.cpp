@@ -57,12 +57,14 @@ struct DetectPerfStats {
 static DetectPerfStats g_detect_perf;
 static bool g_detect_output_layout_logged = false;
 static int g_detect_empty_frames = 0;
+static bool g_prev_frame_strong_person_like = false;
 static const int kYoloBranchCount = 3;
 static const int kYoloOutputCount = 6;
 static const int kYoloRegMax = 16;
 static const int kYoloBoxChannels = 4 * kYoloRegMax;
 static const int kPersonClassId = 4;
 static const int kDarkPersonClassId = 6;
+static const int kDetectClassCount = 7;
 static const std::array<const char*, 7> kDetectClassNames = {
     "cat", "dog", "snake", "mouse", "person", "fire", "person"
 };
@@ -122,6 +124,15 @@ std::string FormatClassLabel(int class_id) {
 
 bool IsPersonLikeClass(int class_id) {
     return class_id == kPersonClassId || class_id == kDarkPersonClassId;
+}
+
+float ThresholdForClass(const std::array<float, kDetectClassCount>& thresholds,
+                        int class_id,
+                        float fallback_threshold) {
+    if (class_id < 0 || class_id >= static_cast<int>(thresholds.size())) {
+        return fallback_threshold;
+    }
+    return thresholds[static_cast<size_t>(class_id)];
 }
 
 float PersonLikeScoreAt(const float* cls_ptr,
@@ -194,6 +205,19 @@ bool HasClassDetection(const std::vector<ObjectDetection>& dets, int class_id) {
 bool HasPersonLikeDetection(const std::vector<ObjectDetection>& dets) {
     for (const auto& det : dets) {
         if (NormalizeModelClassId(det.class_id) == kPersonClassId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool HasStrongPersonLikeDetection(const std::vector<ObjectDetection>& dets,
+                                  const std::array<float, kDetectClassCount>& thresholds) {
+    for (const auto& det : dets) {
+        if (!IsPersonLikeClass(det.class_id)) {
+            continue;
+        }
+        if (det.score >= ThresholdForClass(thresholds, det.class_id, 1.0f)) {
             return true;
         }
     }
@@ -520,7 +544,8 @@ void DecodeDetectBranch(const float* box_ptr,
             const bool keep_best =
                 best_score >= (IsPersonLikeClass(best_class) ? person_conf_threshold : conf_threshold);
             const bool keep_person =
-                !IsPersonLikeClass(best_class) && person_like_score >= person_conf_threshold;
+                !IsPersonLikeClass(best_class) &&
+                person_like_score >= person_conf_threshold;
             if (!keep_best && !keep_person) {
                 continue;
             }
@@ -653,6 +678,26 @@ void DecodeHorizontalPersonRescueBranch(const float* box_ptr,
     }
 }
 
+std::array<float, kDetectClassCount> BuildActiveThresholds(
+    const std::array<float, kDetectClassCount>& base_thresholds,
+    float temporal_person_conf_threshold,
+    float pose_person_conf_threshold) {
+    std::array<float, kDetectClassCount> active = base_thresholds;
+    if (g_prev_frame_strong_person_like) {
+        active[static_cast<size_t>(kPersonClassId)] =
+            std::min(active[static_cast<size_t>(kPersonClassId)], temporal_person_conf_threshold);
+        active[static_cast<size_t>(kDarkPersonClassId)] =
+            std::min(active[static_cast<size_t>(kDarkPersonClassId)], temporal_person_conf_threshold);
+    }
+    if (pose_person_conf_threshold >= 0.0f) {
+        active[static_cast<size_t>(kPersonClassId)] =
+            std::min(active[static_cast<size_t>(kPersonClassId)], pose_person_conf_threshold);
+        active[static_cast<size_t>(kDarkPersonClassId)] =
+            std::min(active[static_cast<size_t>(kDarkPersonClassId)], pose_person_conf_threshold);
+    }
+    return active;
+}
+
 void FlushDetectPerfIfNeeded() {
     using clock = std::chrono::steady_clock;
     const auto now = clock::now();
@@ -688,6 +733,14 @@ void FlushDetectPerfIfNeeded() {
 }
 
 }  // namespace
+
+void YOLOV8NANO::SetClassThresholds(const std::array<float, 7>& thresholds) {
+    class_thresholds_ = thresholds;
+}
+
+void YOLOV8NANO::SetTemporalPersonConfThreshold(float threshold) {
+    temporal_person_conf_threshold_ = threshold;
+}
 
 void YOLOV8NANO::Initialize(std::string& model_path,
                             std::array<int, 2>* in_img_shape,
@@ -752,9 +805,10 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
         LOG_ERROR("detect input tensor is invalid, skip this frame\n");
         return;
     }
-    if (person_conf_threshold < 0.0f) {
-        person_conf_threshold = conf_threshold;
-    }
+    const std::array<float, kDetectClassCount> active_thresholds = BuildActiveThresholds(
+        class_thresholds_, temporal_person_conf_threshold_, person_conf_threshold);
+    const float active_person_threshold =
+        ThresholdForClass(active_thresholds, kPersonClassId, conf_threshold);
 
     const auto preprocess_begin = clock::now();
     int ret = RunAiPreprocessPipe(pipe_offline, *img, inputs[0]);
@@ -811,7 +865,7 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
                                     branch.feat_h,
                                     branch.feat_w,
                                     num_classes,
-                                    std::max(0.20f, person_conf_threshold - 0.10f),
+                                    std::max(0.20f, active_person_threshold - 0.10f),
                                     &best_person_cls_score,
                                     &person_cls_hits);
     }
@@ -832,7 +886,7 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
 
         DecodeDetectBranch(branch.box_ptr, branch.cls_ptr,
                            branch.feat_h, branch.feat_w, branch.stride, num_classes,
-                           decode_conf_threshold, person_conf_threshold,
+                           decode_conf_threshold, active_person_threshold,
                            w_scale, h_scale, img_shape, det_shape, dets);
     }
     const bool likely_low_light = IsLikelyLowLightFrame(*img);
@@ -841,8 +895,8 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
         dets.empty() && (likely_low_light || g_detect_empty_frames >= 2);
     if (allow_relaxed_decode) {
         const float relaxed_person_conf_threshold =
-            std::max(0.20f, person_conf_threshold - 0.08f);
-        if (relaxed_person_conf_threshold < person_conf_threshold) {
+            std::max(0.20f, active_person_threshold - 0.08f);
+        if (relaxed_person_conf_threshold < active_person_threshold) {
             for (int i = 0; i < kYoloBranchCount; ++i) {
                 const DetectOutputBranch& branch = branches[i];
                 if (!branch.IsComplete()) {
@@ -863,7 +917,7 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
         g_detect_empty_frames >= 2;
     if (allow_person_rescue) {
         const float person_rescue_conf_threshold =
-            std::max(kPersonRescueConfThreshold, person_conf_threshold - 0.05f);
+            std::max(kPersonRescueConfThreshold, active_person_threshold - 0.05f);
         for (int i = 0; i < kYoloBranchCount; ++i) {
             const DetectOutputBranch& branch = branches[i];
             if (!branch.IsComplete()) {
@@ -882,7 +936,7 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
         person_cls_hits > 0;
     if (allow_person_track_assist) {
         const float person_assist_conf_threshold =
-            std::max(kPersonTrackAssistConfThreshold, person_conf_threshold - 0.06f);
+            std::max(kPersonTrackAssistConfThreshold, active_person_threshold - 0.06f);
         for (int i = 0; i < kYoloBranchCount; ++i) {
             const DetectOutputBranch& branch = branches[i];
             if (!branch.IsComplete()) {
@@ -910,6 +964,7 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
     result->Resize(final_count);
 
     g_detect_perf.last_det_count = final_count;
+    g_prev_frame_strong_person_like = HasStrongPersonLikeDetection(dets, class_thresholds_);
     if (final_count > 0) {
         g_detect_perf.last_best_class = result->class_ids[0];
         g_detect_perf.last_best_score = result->scores[0];

@@ -6,13 +6,13 @@
 namespace {
 
 constexpr size_t kMaxEventRecords = 256;
-// 使用绝对路径，保证 demo 进程和独立命令读写同一份状态。
 constexpr const char* kEventRecordsPath = "/tmp/ssne_ai_demo_events.log";
 constexpr const char* kEventTimePath = "/tmp/ssne_ai_demo_event_time.cfg";
+constexpr const char* kAlarmDeviceId = "a1-001";
+constexpr uint32_t kAlarmUartBaudRate = 9600;
 
 }  // namespace
 
-// 事件记录器只关心告警状态从 false 变 true 的瞬间，避免持续告警反复刷记录。
 void EventRecorder::Update(bool fall_active,
                            bool intrusion_active,
                            bool fire_active,
@@ -24,12 +24,15 @@ void EventRecorder::Update(bool fall_active,
         fire_active
     }};
 
-    // 只记录事件开始的上升沿，避免持续告警反复刷记录。
     for (size_t i = 0; i < next_active.size(); ++i) {
-        if (next_active[i] && !m_active[i]) {
+        const bool was_active = m_active[i];
+        const bool is_active = next_active[i];
+        if (is_active && !was_active) {
             RecordStartLocked(static_cast<EventType>(i), frame_index);
+        } else if (!is_active && was_active) {
+            RecordEndLocked(static_cast<EventType>(i), frame_index);
         }
-        m_active[i] = next_active[i];
+        m_active[i] = is_active;
     }
 }
 
@@ -78,7 +81,6 @@ bool EventRecorder::HandleCommand(const std::string& line, bool* should_exit) {
     }
 
     std::string time_value;
-    // 保留短命令，适配串口会截断长命令的场景。
     if (StartsWith(cmd, "time set ")) {
         time_value = Trim(cmd.substr(9));
     } else if (StartsWith(cmd, "t set ")) {
@@ -113,7 +115,6 @@ std::time_t EventRecorder::NowLocked() const {
     LoadCalibrationLocked();
     const std::time_t now =
         std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-    // 校准只记录事件时钟偏移，不修改系统时间，避免影响底层 SDK 和日志时间戳。
     return static_cast<std::time_t>(now + m_time_offset_seconds);
 }
 
@@ -128,7 +129,6 @@ void EventRecorder::SetCalibratedTimeLocked(std::time_t calibrated_time) {
 
 void EventRecorder::RecordStartLocked(EventType type, uint64_t frame_index) {
     LoadRecordsLocked();
-    // 环形保留最近若干条记录，避免长期运行时事件文件无限增长。
     if (m_records.size() >= kMaxEventRecords) {
         m_records.erase(m_records.begin());
     }
@@ -146,6 +146,85 @@ void EventRecorder::RecordStartLocked(EventType type, uint64_t frame_index) {
                 FormatTime(record.start_time).c_str(),
                 static_cast<unsigned long long>(record.frame_index),
                 record.calibrated ? "calibrated" : "system");
+    SendAlarmLineLocked(type, "start", frame_index);
+}
+
+void EventRecorder::RecordEndLocked(EventType type, uint64_t frame_index) {
+    std::printf("[EVENT] type=%s end frame=%llu\n",
+                TypeName(type),
+                static_cast<unsigned long long>(frame_index));
+    SendAlarmLineLocked(type, "end", frame_index);
+}
+
+void EventRecorder::EnsureAlarmUartLocked() {
+#ifdef SSNE_AI_DEMO_ENABLE_A1_UART
+    if (m_alarm_uart_ready || m_alarm_uart_failed) {
+        return;
+    }
+
+    const int ret = a1_uart_open(&m_alarm_uart_sink, kAlarmUartBaudRate);
+    if (ret == 0) {
+        m_alarm_uart_ready = true;
+        std::printf("[EVENT] alarm uart ready baud=%u\n",
+                    static_cast<unsigned>(kAlarmUartBaudRate));
+    } else {
+        m_alarm_uart_failed = true;
+        std::printf("[EVENT] alarm uart init failed ret=%d baud=%u\n",
+                    ret,
+                    static_cast<unsigned>(kAlarmUartBaudRate));
+    }
+#endif
+}
+
+void EventRecorder::SendAlarmLineLocked(EventType type,
+                                        const char* state,
+                                        uint64_t frame_index) {
+#ifdef SSNE_AI_DEMO_ENABLE_A1_UART
+    if (state == nullptr) {
+        return;
+    }
+
+    EnsureAlarmUartLocked();
+    if (!m_alarm_uart_ready) {
+        return;
+    }
+
+    char line[96] = {};
+    const int length = std::snprintf(line,
+                                     sizeof(line),
+                                     "ALARM,%s,%s,%s,%llu\n",
+                                     kAlarmDeviceId,
+                                     TypeName(type),
+                                     state,
+                                     static_cast<unsigned long long>(frame_index));
+    if (length <= 0) {
+        return;
+    }
+
+    size_t remaining = static_cast<size_t>(length);
+    size_t offset = 0;
+    while (remaining > 0) {
+        const size_t chunk = remaining > 32U ? 32U : remaining;
+        if (a1_uart_write(&m_alarm_uart_sink,
+                          reinterpret_cast<const uint8_t*>(line + offset),
+                          chunk) != 0) {
+            std::printf("[EVENT] alarm uart send failed type=%s state=%s frame=%llu\n",
+                        TypeName(type),
+                        state,
+                        static_cast<unsigned long long>(frame_index));
+            m_alarm_uart_ready = false;
+            m_alarm_uart_failed = true;
+            a1_uart_close(&m_alarm_uart_sink);
+            break;
+        }
+        offset += chunk;
+        remaining -= chunk;
+    }
+#else
+    (void)type;
+    (void)state;
+    (void)frame_index;
+#endif
 }
 
 void EventRecorder::PrintHelp() const {
@@ -154,8 +233,8 @@ void EventRecorder::PrintHelp() const {
     std::printf("  time                                  show event clock\n");
     std::printf("  time set YYYY-MM-DD HH[:MM[:SS]]      calibrate event clock only\n");
     std::printf("  t YYYYMMDDHHMMSS                      short calibrate command\n");
-    std::printf("  events | event view                    show recorded event start times\n");
-    std::printf("  event clear                            clear event records\n");
+    std::printf("  events | event view                   show recorded event start times\n");
+    std::printf("  event clear                           clear event records\n");
     std::printf("Shell command:\n");
     std::printf("  ssne_eventctl time\n");
     std::printf("  ssne_eventctl time set 2026-05-03 14:00:00\n");
@@ -252,8 +331,6 @@ bool EventRecorder::ParseDateTime(const std::string& value, std::time_t* out_tim
     int second = 0;
     char tail = '\0';
     bool parsed_ok = false;
-    // 同时支持可读格式和紧凑格式，例如 "2026-05-03 14:23:45"
-    // 以及 "20260503142345"。
     if (std::sscanf(trimmed.c_str(),
                     "%d-%d-%d %d:%d:%d%c",
                     &year,
@@ -357,7 +434,6 @@ void EventRecorder::LoadCalibrationLocked() const {
     m_time_calibrated = false;
     m_time_offset_seconds = 0;
 
-    // 每次查询都重新加载，确保长期运行的 demo 能看到外部命令的校准结果。
     FILE* file = std::fopen(kEventTimePath, "r");
     if (file == nullptr) {
         return;
@@ -390,7 +466,6 @@ void EventRecorder::LoadRecordsLocked() const {
     m_records_loaded = true;
     m_records.clear();
 
-    // 文件格式：type|epoch_seconds|frame_index|calibrated。
     FILE* file = std::fopen(kEventRecordsPath, "r");
     if (file == nullptr) {
         return;
