@@ -146,7 +146,7 @@ class YOLOV8NANO {
   ssne_tensor_t outputs[6] = {};
   AiPreprocessPipe pipe_offline = GetAIPreprocessPipe();
   std::array<float, 7> class_thresholds_ = {
-      0.35f, 0.35f, 0.35f, 0.35f, 0.33f, 0.35f, 0.33f
+      0.45f, 0.43f, 0.44f, 0.44f, 0.26f, 0.43f, 0.14f
   };
-  float temporal_person_conf_threshold_ = 0.33f;
+  float temporal_person_conf_threshold_ = 0.20f;
 };

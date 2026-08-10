@@ -33,10 +33,10 @@ using namespace std;
 namespace {
 
 constexpr float kDetectFallbackConfThreshold = 0.35f;
-constexpr float kDetectTemporalPersonConfThreshold = 0.33f;
-constexpr float kDetectPoseAssistPersonConfThreshold = 0.24f;
+constexpr float kDetectTemporalPersonConfThreshold = 0.20f;
+constexpr float kDetectPoseAssistPersonConfThreshold = 0.14f;
 constexpr std::array<float, 7> kDetectClassThresholds = {
-    0.35f, 0.35f, 0.35f, 0.35f, 0.33f, 0.35f, 0.33f
+    0.45f, 0.43f, 0.44f, 0.44f, 0.26f, 0.43f, 0.14f
 };
 constexpr float kPoseConfThreshold = 0.25f;
 constexpr float kPoseDrawKptConfThreshold = 0.40f;

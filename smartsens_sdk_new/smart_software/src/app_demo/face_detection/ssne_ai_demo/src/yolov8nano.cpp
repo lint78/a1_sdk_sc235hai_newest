@@ -49,6 +49,8 @@ struct DetectPerfStats {
     int last_det_count = 0;
     int last_best_class = -1;
     float last_best_score = 0.0f;
+    float last_best_area_ratio = 0.0f;
+    float last_best_aspect = 0.0f;
     float last_best_person_cls_score = 0.0f;
     int last_person_cls_hits = 0;
     std::chrono::steady_clock::time_point window_begin = std::chrono::steady_clock::now();
@@ -73,6 +75,8 @@ static constexpr float kPersonTrackAssistConfThreshold = 0.24f;
 static constexpr float kPersonRescueMinAspect = 1.15f;
 static constexpr float kPersonRescueMinAreaRatio = 0.012f;
 static constexpr float kPersonRescueMinLongSideRatio = 0.18f;
+static constexpr float kNonPersonMaxAreaRatio = 0.85f;
+static constexpr float kBorderTouchTolerance = 2.0f;
 
 bool IsValidTensor(ssne_tensor_t tensor) {
     return get_data(tensor) != nullptr &&
@@ -191,6 +195,38 @@ float IoUBox(const std::array<float, 4>& a, const std::array<float, 4>& b) {
         return 0.0f;
     }
     return inter / uni;
+}
+
+float BoxAreaRatio(const std::array<float, 4>& box, const std::array<int, 2>& shape) {
+    const float w = std::max(0.0f, box[2] - box[0]);
+    const float h = std::max(0.0f, box[3] - box[1]);
+    const float area = static_cast<float>(std::max(1, shape[0] * shape[1]));
+    return (w * h) / area;
+}
+
+float BoxAspect(const std::array<float, 4>& box) {
+    const float w = std::max(0.0f, box[2] - box[0]);
+    const float h = std::max(1.0f, box[3] - box[1]);
+    return w / h;
+}
+
+bool TouchesCropBorder(const std::array<float, 4>& box, const std::array<int, 2>& crop_shape) {
+    return box[0] <= kBorderTouchTolerance ||
+           box[1] <= kBorderTouchTolerance ||
+           box[2] >= static_cast<float>(crop_shape[0]) - kBorderTouchTolerance ||
+           box[3] >= static_cast<float>(crop_shape[1]) - kBorderTouchTolerance;
+}
+
+bool IsImplausibleNonPersonDetection(int class_id,
+                                     const std::array<float, 4>& box,
+                                     const std::array<int, 2>& crop_shape) {
+    if (IsPersonLikeClass(class_id)) {
+        return false;
+    }
+    if (BoxAreaRatio(box, crop_shape) < kNonPersonMaxAreaRatio) {
+        return false;
+    }
+    return TouchesCropBorder(box, crop_shape);
 }
 
 bool HasClassDetection(const std::vector<ObjectDetection>& dets, int class_id) {
@@ -511,7 +547,7 @@ void DecodeDetectBranch(const float* box_ptr,
                         int feat_w,
                         int stride,
                         int num_classes,
-                        float conf_threshold,
+                        const std::array<float, kDetectClassCount>& class_thresholds,
                         float person_conf_threshold,
                         float w_scale,
                         float h_scale,
@@ -541,8 +577,10 @@ void DecodeDetectBranch(const float* box_ptr,
 
             const float person_like_score =
                 PersonLikeScoreAt(cls_ptr, gy, gx, feat_h, feat_w, num_classes);
+            const float best_class_threshold =
+                ThresholdForClass(class_thresholds, best_class, person_conf_threshold);
             const bool keep_best =
-                best_score >= (IsPersonLikeClass(best_class) ? person_conf_threshold : conf_threshold);
+                best_score >= (IsPersonLikeClass(best_class) ? person_conf_threshold : best_class_threshold);
             const bool keep_person =
                 !IsPersonLikeClass(best_class) &&
                 person_like_score >= person_conf_threshold;
@@ -588,6 +626,9 @@ void DecodeDetectBranch(const float* box_ptr,
             }
 
             if (keep_best) {
+                if (IsImplausibleNonPersonDetection(best_class, mapped_box, crop_shape)) {
+                    continue;
+                }
                 ObjectDetection det;
                 det.class_id = best_class;
                 det.score = best_score;
@@ -710,7 +751,7 @@ void FlushDetectPerfIfNeeded() {
     const double fps = static_cast<double>(g_detect_perf.frames) * 1000.0 / elapsed_ms;
     const double inv = 1.0 / static_cast<double>(g_detect_perf.frames);
     const std::string best_class_label = FormatClassLabel(g_detect_perf.last_best_class);
-    LOG_INFO("detect fps=%.2f preprocess=%.2fms inference=%.2fms getoutput=%.2fms decode=%.2fms det_count=%d best=%s best_score=%.3f\n",
+    LOG_INFO("detect fps=%.2f preprocess=%.2fms inference=%.2fms getoutput=%.2fms decode=%.2fms det_count=%d best=%s best_score=%.3f best_area=%.3f best_aspect=%.2f\n",
              fps,
              g_detect_perf.preprocess_ms * inv,
              g_detect_perf.inference_ms * inv,
@@ -718,7 +759,9 @@ void FlushDetectPerfIfNeeded() {
              g_detect_perf.decode_ms * inv,
              g_detect_perf.last_det_count,
              best_class_label.c_str(),
-             g_detect_perf.last_best_score);
+             g_detect_perf.last_best_score,
+             g_detect_perf.last_best_area_ratio,
+             g_detect_perf.last_best_aspect);
     g_detect_perf.frames = 0;
     g_detect_perf.preprocess_ms = 0.0;
     g_detect_perf.inference_ms = 0.0;
@@ -727,6 +770,8 @@ void FlushDetectPerfIfNeeded() {
     g_detect_perf.last_det_count = 0;
     g_detect_perf.last_best_class = -1;
     g_detect_perf.last_best_score = 0.0f;
+    g_detect_perf.last_best_area_ratio = 0.0f;
+    g_detect_perf.last_best_aspect = 0.0f;
     g_detect_perf.last_best_person_cls_score = 0.0f;
     g_detect_perf.last_person_cls_hits = 0;
     g_detect_perf.window_begin = now;
@@ -781,9 +826,15 @@ void YOLOV8NANO::Initialize(std::string& model_path,
     set_data_type(inputs[0], dtype);
 
     LOG_INFO("YOLOv8 detect initialized\n");
-    LOG_INFO("model=%s crop=[%d,%d] det=[%d,%d] input=[%u,%u] format=%s classes=%d scale=(%.6f,%.6f)\n",
+    LOG_INFO("model=%s crop=[%d,%d] det=[%d,%d] input=[%u,%u] format=%s output_layout=%s classes=%d scale=(%.6f,%.6f)\n",
              model_path.c_str(), img_shape[0], img_shape[1], det_shape[0], det_shape[1],
-             det_width, det_height, YOLO_INPUT_FORMAT_NAME, num_classes, w_scale, h_scale);
+             det_width, det_height, YOLO_INPUT_FORMAT_NAME,
+#if YOLO_OUTPUT_LAYOUT_NCHW
+             "NCHW",
+#else
+             "NHWC",
+#endif
+             num_classes, w_scale, h_scale);
 }
 
 void YOLOV8NANO::Predict(ssne_tensor_t* img,
@@ -872,7 +923,6 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
 
     std::vector<ObjectDetection> dets;
     dets.reserve(2000);
-    float decode_conf_threshold = conf_threshold;
     for (int i = 0; i < kYoloBranchCount; ++i) {
         const DetectOutputBranch& branch = branches[i];
         if (!branch.IsComplete()) {
@@ -886,7 +936,7 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
 
         DecodeDetectBranch(branch.box_ptr, branch.cls_ptr,
                            branch.feat_h, branch.feat_w, branch.stride, num_classes,
-                           decode_conf_threshold, active_person_threshold,
+                           active_thresholds, active_person_threshold,
                            w_scale, h_scale, img_shape, det_shape, dets);
     }
     const bool likely_low_light = IsLikelyLowLightFrame(*img);
@@ -905,7 +955,7 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
 
                 DecodeDetectBranch(branch.box_ptr, branch.cls_ptr,
                                    branch.feat_h, branch.feat_w, branch.stride, num_classes,
-                                   conf_threshold, relaxed_person_conf_threshold,
+                                   active_thresholds, relaxed_person_conf_threshold,
                                    w_scale, h_scale, img_shape, det_shape, dets);
             }
         }
@@ -968,10 +1018,14 @@ void YOLOV8NANO::Predict(ssne_tensor_t* img,
     if (final_count > 0) {
         g_detect_perf.last_best_class = result->class_ids[0];
         g_detect_perf.last_best_score = result->scores[0];
+        g_detect_perf.last_best_area_ratio = BoxAreaRatio(result->boxes[0], img_shape);
+        g_detect_perf.last_best_aspect = BoxAspect(result->boxes[0]);
         g_detect_empty_frames = 0;
     } else {
         g_detect_perf.last_best_class = -1;
         g_detect_perf.last_best_score = 0.0f;
+        g_detect_perf.last_best_area_ratio = 0.0f;
+        g_detect_perf.last_best_aspect = 0.0f;
         g_detect_empty_frames += 1;
     }
     g_detect_perf.last_best_person_cls_score = best_person_cls_score;
