@@ -320,7 +320,7 @@ void LogTensorFingerprint(const char* prefix, ssne_tensor_t tensor) {
 }
 
 void LogGestureOutputPreview(ssne_tensor_t tensor) {
-    if (!IsValidTensor(tensor) || get_total_size(tensor) < 5U) {
+    if (!IsValidTensor(tensor) || get_total_size(tensor) < 4U) {
         LOG_WARN("gesture output preview unavailable: invalid tensor or total=%u\n",
                  get_total_size(tensor));
         return;
@@ -336,37 +336,34 @@ void LogGestureOutputPreview(ssne_tensor_t tensor) {
 
     if (dtype == SSNE_FLOAT32) {
         const float* ptr = reinterpret_cast<const float*>(data);
-        LOG_INFO("gesture output preview: decode=float32 total=%u order=[down,left,right,up,none] logits5=[%.6f %.6f %.6f %.6f %.6f]\n",
+        LOG_INFO("gesture output preview: decode=float32 total=%u order=[TU,TD,TL,TR] logits4=[%.6f %.6f %.6f %.6f]\n",
                  total,
                  ptr[0],
                  ptr[1],
                  ptr[2],
-                 ptr[3],
-                 ptr[4]);
+                 ptr[3]);
         return;
     }
 
     if (dtype == SSNE_INT8) {
         const int8_t* ptr = reinterpret_cast<const int8_t*>(data);
-        LOG_INFO("gesture output preview: decode=int8_raw total=%u order=[down,left,right,up,none] logits5=[%d %d %d %d %d] note=check SDK quant scale if this is not float32\n",
+        LOG_INFO("gesture output preview: decode=int8_raw total=%u order=[TU,TD,TL,TR] logits4=[%d %d %d %d] note=check SDK quant scale if this is not float32\n",
                  total,
                  static_cast<int>(ptr[0]),
                  static_cast<int>(ptr[1]),
                  static_cast<int>(ptr[2]),
-                 static_cast<int>(ptr[3]),
-                 static_cast<int>(ptr[4]));
+                 static_cast<int>(ptr[3]));
         return;
     }
 
     if (dtype == SSNE_UINT8) {
         const uint8_t* ptr = reinterpret_cast<const uint8_t*>(data);
-        LOG_INFO("gesture output preview: decode=uint8_raw total=%u order=[down,left,right,up,none] logits5=[%u %u %u %u %u] note=check SDK quant scale/zero point if this is not float32\n",
+        LOG_INFO("gesture output preview: decode=uint8_raw total=%u order=[TU,TD,TL,TR] logits4=[%u %u %u %u] note=check SDK quant scale/zero point if this is not float32\n",
                  total,
                  static_cast<unsigned int>(ptr[0]),
                  static_cast<unsigned int>(ptr[1]),
                  static_cast<unsigned int>(ptr[2]),
-                 static_cast<unsigned int>(ptr[3]),
-                 static_cast<unsigned int>(ptr[4]));
+                 static_cast<unsigned int>(ptr[3]));
         return;
     }
 
@@ -510,12 +507,12 @@ bool CropYuv422Tensor(ssne_tensor_t input, const CropRoi& roi, ssne_tensor_t* cr
     return true;
 }
 
-bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 5>* values) {
+bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) {
     if (values == nullptr || !IsValidTensor(tensor)) {
         return false;
     }
 
-    if (get_total_size(tensor) < 5U) {
+    if (get_total_size(tensor) < 4U) {
         return false;
     }
 
@@ -525,7 +522,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 5>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 4; ++i) {
             (*values)[static_cast<size_t>(i)] = ptr[i];
         }
         return true;
@@ -536,7 +533,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 5>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 4; ++i) {
             (*values)[static_cast<size_t>(i)] = static_cast<float>(ptr[i]);
         }
         return true;
@@ -547,7 +544,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 5>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 5; ++i) {
+        for (int i = 0; i < 4; ++i) {
             (*values)[static_cast<size_t>(i)] = static_cast<float>(ptr[i]);
         }
         return true;
@@ -628,16 +625,16 @@ float Sigmoid(float value) {
 }
 
 GestureCommand GestureClassIndexToCommand(int class_index) {
-    // Model output order is [down, left, right, up, none].
+    // Model output order is [TU, TD, TL, TR].
     switch (class_index) {
         case 0:
-            return GestureCommand::TD;
-        case 1:
-            return GestureCommand::TL;
-        case 2:
-            return GestureCommand::TR;
-        case 3:
             return GestureCommand::TU;
+        case 1:
+            return GestureCommand::TD;
+        case 2:
+            return GestureCommand::TL;
+        case 3:
+            return GestureCommand::TR;
         default:
             return GestureCommand::NONE;
     }
@@ -812,7 +809,7 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
 
     static bool logged_roi_info = false;
     if (!logged_roi_info) {
-        LOG_INFO("gesture roi: manual_crop=0 official_preprocess=1 focus_valid=%d configured_img=[%d,%d] runtime_img=[%u,%u] box_crop=[%.1f,%.1f,%.1f,%.1f] note=RunAiPreprocessPipe consumes source tensor directly like RPS demo\n",
+        LOG_INFO("gesture roi: manual_crop=1 official_preprocess=1 focus_valid=%d configured_img=[%d,%d] runtime_img=[%u,%u] box_crop=[%.1f,%.1f,%.1f,%.1f] note=manual ROI crop then RunAiPreprocessPipe resize to model input\n",
                  focus_valid ? 1 : 0,
                  img_shape[0],
                  img_shape[1],
@@ -825,7 +822,49 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
         logged_roi_info = true;
     }
 
-    const int preprocess_ret = RunAiPreprocessPipe(pipe_offline, *img, inputs[0]);
+    // Crop the selected source ROI first. The official preprocessing pipe then
+    // resizes that ROI to the model's required 256x256 RGB tensor.
+    const CropRoi roi = BuildGestureRoi(focus_valid ? &focus_box : nullptr, img_shape);
+    ssne_tensor_t preprocess_source = *img;
+    ssne_tensor_t cropped_source = ssne_tensor_t{};
+    bool owns_cropped_source = false;
+    if (roi.IsValid() &&
+        (roi.left != 0 || roi.top != 0 ||
+         roi.right != static_cast<int>(get_width(*img)) ||
+         roi.bottom != static_cast<int>(get_height(*img)))) {
+        if (!CropYuv422Tensor(*img, roi, &cropped_source)) {
+            LOG_ERROR("gesture ROI crop failed: roi=[l=%d t=%d r=%d b=%d] source=[%u,%u] format=%s\n",
+                      roi.left, roi.top, roi.right, roi.bottom,
+                      get_width(*img), get_height(*img),
+                      SsneFormatName(get_data_format(*img)));
+            return;
+        }
+        preprocess_source = cropped_source;
+        owns_cropped_source = true;
+    }
+
+    static bool logged_preprocess_roi = false;
+    static CropRoi last_preprocess_roi;
+    const bool roi_changed =
+        !logged_preprocess_roi ||
+        last_preprocess_roi.left != roi.left ||
+        last_preprocess_roi.top != roi.top ||
+        last_preprocess_roi.right != roi.right ||
+        last_preprocess_roi.bottom != roi.bottom;
+    if (roi_changed) {
+        LOG_INFO("gesture preprocess ROI: focus_valid=%d roi=[l=%d t=%d r=%d b=%d w=%d h=%d] source=[%u,%u]\n",
+                 focus_valid ? 1 : 0,
+                 roi.left, roi.top, roi.right, roi.bottom,
+                 roi.Width(), roi.Height(),
+                 get_width(preprocess_source), get_height(preprocess_source));
+        last_preprocess_roi = roi;
+        logged_preprocess_roi = true;
+    }
+
+    const int preprocess_ret = RunAiPreprocessPipe(pipe_offline, preprocess_source, inputs[0]);
+    if (owns_cropped_source) {
+        release_tensor(cropped_source);
+    }
     static bool logged_preprocess_output = false;
     if (!logged_preprocess_output) {
         LOG_INFO("gesture preprocess ret=%d\n", preprocess_ret);
@@ -897,14 +936,14 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
         logged_output_tensor = true;
     }
 
-    std::array<float, 5> logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 4> logits = {0.0f, 0.0f, 0.0f, 0.0f};
     if (!CopyOutputToFloatArray(outputs[0], &logits)) {
-        LOG_ERROR("gesture output decode failed: output[0] is not a 5-logit tensor\n");
+        LOG_ERROR("gesture output decode failed: output[0] is not a 4-logit tensor\n");
         return;
     }
 
-    std::array<float, 5> scores = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    for (int i = 0; i < 5; ++i) {
+    std::array<float, 4> scores = {0.0f, 0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < 4; ++i) {
         scores[static_cast<size_t>(i)] =
             Sigmoid(logits[static_cast<size_t>(i)]);
     }
@@ -919,19 +958,14 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
     result->logits = logits;
     result->probabilities = scores;
     result->confidence = scores[static_cast<size_t>(best_index)];
-    const float none_score = scores[4];
-    if (none_score >= conf_threshold && none_score >= result->confidence) {
+    if (result->confidence < conf_threshold) {
         result->command = GestureCommand::NONE;
         result->valid = false;
         return;
     }
 
-    result->valid = result->confidence >= conf_threshold;
-    result->command = result->valid ?
-        GestureClassIndexToCommand(best_index) : GestureCommand::NONE;
-    if (!result->valid) {
-        result->command = GestureCommand::NONE;
-    }
+    result->valid = true;
+    result->command = GestureClassIndexToCommand(best_index);
 }
 
 void GestureClassifier::Release() {
@@ -1045,9 +1079,8 @@ void SnakeGame::SetDirection(SnakeDirection next_direction) {
         return;
     }
     if (IsOpposite(direction, next_direction)) {
-        std::reverse(body.begin(), body.end());
-        direction = next_direction;
-        pending_direction = next_direction;
+        // Reject a 180-degree turn. Reversing the deque changes the head/tail
+        // semantics and can make collision detection inconsistent.
         return;
     }
     pending_direction = next_direction;

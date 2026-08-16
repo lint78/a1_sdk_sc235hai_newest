@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cctype>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -48,7 +49,7 @@ constexpr int kPoseForceInterval = 15;
 constexpr int kPoseAssistDetectFrames = 15;
 constexpr int kPoseVisualMaxHoldFrames = 15;
 constexpr float kPoseTrackScoreFloor = 0.50f;
-constexpr float kGestureConfThreshold = 0.55f;
+constexpr float kGestureConfThreshold = 0.38f;
 constexpr int kSnakeBoardCols = 20;
 constexpr int kSnakeBoardRows = 11;
 constexpr int kDetectNumClasses = 7;
@@ -447,8 +448,82 @@ enum class GestureMapMode {
     LEFT_TO_UP = 1,
     RIGHT_TO_UP = 2,
     FLIP_X = 3,
-    FLIP_Y = 4
+    FLIP_Y = 4,
+    CUSTOM = 5
 };
+
+std::atomic<int> g_custom_map_tu(static_cast<int>(GestureCommand::TU));
+std::atomic<int> g_custom_map_td(static_cast<int>(GestureCommand::TD));
+std::atomic<int> g_custom_map_tl(static_cast<int>(GestureCommand::TL));
+std::atomic<int> g_custom_map_tr(static_cast<int>(GestureCommand::TR));
+
+int GestureCommandIndex(GestureCommand command) {
+    switch (command) {
+        case GestureCommand::TU:
+            return 0;
+        case GestureCommand::TD:
+            return 1;
+        case GestureCommand::TL:
+            return 2;
+        case GestureCommand::TR:
+            return 3;
+        default:
+            return -1;
+    }
+}
+
+GestureCommand GestureCommandFromIndex(int index) {
+    switch (index) {
+        case 0:
+            return GestureCommand::TU;
+        case 1:
+            return GestureCommand::TD;
+        case 2:
+            return GestureCommand::TL;
+        case 3:
+            return GestureCommand::TR;
+        default:
+            return GestureCommand::NONE;
+    }
+}
+
+GestureCommand GestureCommandFromToken(std::string token) {
+    std::transform(token.begin(), token.end(), token.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    if (token == "tu" || token == "up") {
+        return GestureCommand::TU;
+    }
+    if (token == "td" || token == "down") {
+        return GestureCommand::TD;
+    }
+    if (token == "tl" || token == "left") {
+        return GestureCommand::TL;
+    }
+    if (token == "tr" || token == "right") {
+        return GestureCommand::TR;
+    }
+    return GestureCommand::NONE;
+}
+
+void SetCustomGestureMapping(GestureCommand source, GestureCommand target) {
+    switch (source) {
+        case GestureCommand::TU:
+            g_custom_map_tu.store(static_cast<int>(target));
+            break;
+        case GestureCommand::TD:
+            g_custom_map_td.store(static_cast<int>(target));
+            break;
+        case GestureCommand::TL:
+            g_custom_map_tl.store(static_cast<int>(target));
+            break;
+        case GestureCommand::TR:
+            g_custom_map_tr.store(static_cast<int>(target));
+            break;
+        default:
+            break;
+    }
+}
 
 const char* GestureRoiModeName(GestureRoiMode mode) {
     switch (mode) {
@@ -473,6 +548,8 @@ const char* GestureMapModeName(GestureMapMode mode) {
             return "flip_x";
         case GestureMapMode::FLIP_Y:
             return "flip_y";
+        case GestureMapMode::CUSTOM:
+            return "custom";
         default:
             return "raw";
     }
@@ -484,6 +561,20 @@ GestureCommand MapGestureCommand(GestureCommand command, GestureMapMode mode) {
     }
 
     switch (mode) {
+        case GestureMapMode::CUSTOM: {
+            switch (command) {
+                case GestureCommand::TU:
+                    return GestureCommandFromIndex(g_custom_map_tu.load());
+                case GestureCommand::TD:
+                    return GestureCommandFromIndex(g_custom_map_td.load());
+                case GestureCommand::TL:
+                    return GestureCommandFromIndex(g_custom_map_tl.load());
+                case GestureCommand::TR:
+                    return GestureCommandFromIndex(g_custom_map_tr.load());
+                default:
+                    return GestureCommand::NONE;
+            }
+        }
         case GestureMapMode::LEFT_TO_UP:
             switch (command) {
                 case GestureCommand::TL:
@@ -542,10 +633,6 @@ GestureCommand GestureDisplayCommandFromScores(const GestureResult& result,
     }
 
     const float best_score = result.probabilities[static_cast<size_t>(best_index)];
-    const float none_score = result.probabilities[4];
-    if (none_score >= conf_threshold && none_score >= best_score) {
-        return GestureCommand::NONE;
-    }
     if (best_score < conf_threshold) {
         return GestureCommand::NONE;
     }
@@ -553,13 +640,13 @@ GestureCommand GestureDisplayCommandFromScores(const GestureResult& result,
     // The icon should reflect the model class semantics, not the control remap.
     switch (best_index) {
         case 0:
-            return GestureCommand::TD;
-        case 1:
-            return GestureCommand::TL;
-        case 2:
-            return GestureCommand::TR;
-        case 3:
             return GestureCommand::TU;
+        case 1:
+            return GestureCommand::TD;
+        case 2:
+            return GestureCommand::TL;
+        case 3:
+            return GestureCommand::TR;
         default:
             return GestureCommand::NONE;
     }
@@ -590,8 +677,12 @@ std::array<float, 4> GestureGuideBoxForDisplay(GestureRoiMode mode,
     if (focus_box != nullptr) {
         return *focus_box;
     }
-    (void)crop_shape;
-    return kGestureGuideBoxCenterCrop;
+    return {
+        0.0f,
+        0.0f,
+        static_cast<float>(crop_shape[0]),
+        static_cast<float>(crop_shape[1])
+    };
 }
 std::string TrimInput(const std::string& value) {
     const char* whitespace = " \t\r\n";
@@ -646,8 +737,13 @@ std::atomic<int> g_gesture_roi_mode(static_cast<int>(GestureRoiMode::CENTER));
 std::atomic<bool> g_gesture_roi_changed(false);
 std::atomic<bool> g_gesture_normalize_enabled(false);
 std::atomic<int> g_gesture_input_format(SSNE_RGB);
+// Keep the diagnostic build in raw mode. Calibration can be enabled after
+// the raw model response changes correctly with all four gestures.
 std::atomic<int> g_gesture_map_mode(static_cast<int>(GestureMapMode::RAW));
 std::atomic<bool> g_companion_reinit_requested(false);
+// Test mode bypasses temporal filtering so model output can be compared
+// directly with the direction applied to the snake.
+std::atomic<bool> g_gesture_direct_test(true);
 
 DemoMode GetDemoMode() {
     return static_cast<DemoMode>(g_demo_mode.load());
@@ -704,7 +800,9 @@ void PrintCompanionHelp() {
     std::cout << "  roi center|full                     switch gesture ROI for debug (default center)\n";
     std::cout << "  norm on|off                         rebuild gesture preprocess normalize (gesture default off for mobilenet debug)\n";
     std::cout << "  color rgb|bgr                       rebuild gesture input color order\n";
-    std::cout << "  gmap raw|left_to_up|right_to_up|flip_x|flip_y  remap raw gesture direction (default raw)\n";
+    std::cout << "  gmap raw|left_to_up|right_to_up|flip_x|flip_y  select preset gesture mapping (default raw)\n";
+    std::cout << "  gmap TU TR                         map model TU to snake TR/RIGHT\n";
+    std::cout << "  direct on|off                      bypass gesture temporal filter for diagnosis (default on)\n";
 }
 
 bool HandleDemoCommand(const std::string& line) {
@@ -744,6 +842,16 @@ bool HandleDemoCommand(const std::string& line) {
         std::cout << "Snake pause requested." << std::endl;
         return true;
     }
+    if (cmd == "direct on" || cmd == "snake direct on" || cmd == "gesture direct on") {
+        g_gesture_direct_test.store(true);
+        std::cout << "Gesture direct test: on." << std::endl;
+        return true;
+    }
+    if (cmd == "direct off" || cmd == "snake direct off" || cmd == "gesture direct off") {
+        g_gesture_direct_test.store(false);
+        std::cout << "Gesture direct test: off." << std::endl;
+        return true;
+    }
     if (cmd == "roi center" || cmd == "roicenter" || cmd == "centerroi" || cmd == "roi_center" || cmd == "gesture roi center") {
         SetGestureRoiMode(GestureRoiMode::CENTER);
         std::cout << "Gesture ROI mode: center." << std::endl;
@@ -773,6 +881,24 @@ bool HandleDemoCommand(const std::string& line) {
         SetGestureInputFormat(SSNE_BGR);
         std::cout << "Gesture input color: BGR. Reinitializing companion model." << std::endl;
         return true;
+    }
+    if (cmd.rfind("gmap ", 0) == 0 || cmd.rfind("map ", 0) == 0) {
+        std::istringstream mapping_stream(cmd);
+        std::string mapping_prefix;
+        std::string source_token;
+        std::string target_token;
+        mapping_stream >> mapping_prefix >> source_token >> target_token;
+        const GestureCommand source = GestureCommandFromToken(source_token);
+        const GestureCommand target = GestureCommandFromToken(target_token);
+        if ((mapping_prefix == "gmap" || mapping_prefix == "map") &&
+            source != GestureCommand::NONE && target != GestureCommand::NONE) {
+            SetCustomGestureMapping(source, target);
+            SetGestureMapMode(GestureMapMode::CUSTOM);
+            std::cout << "Gesture custom map: "
+                      << GestureCommandName(source) << " -> "
+                      << GestureCommandName(target) << "." << std::endl;
+            return true;
+        }
     }
     if (cmd == "gmap raw" || cmd == "map raw" || cmd == "gesture map raw") {
         SetGestureMapMode(GestureMapMode::RAW);
@@ -898,8 +1024,8 @@ struct SnakeLoopPerfStats {
     GestureCommand last_applied_command = GestureCommand::NONE;
     SnakeDirection last_direction = SnakeDirection::RIGHT;
     float last_confidence = 0.0f;
-    std::array<float, 5> last_logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    std::array<float, 5> last_probs = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 4> last_logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 4> last_probs = {0.0f, 0.0f, 0.0f, 0.0f};
     std::string last_state = "running";
     const char* last_roi_mode = "center";
     const char* last_norm_mode = "on";
@@ -970,7 +1096,7 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
 
     const double inv = 1.0 / static_cast<double>(stats->frames);
     const double fps = static_cast<double>(stats->frames) * 1000.0 / elapsed_ms;
-    LOG_INFO("serial mode=snake build=snake_tickdir_display_fix_v27 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=sigmoid_multilabel map=%s display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[D %.3f L %.3f R %.3f U %.3f N %.3f] scores=[D %.3f L %.3f R %.3f U %.3f N %.3f] state=%s\n",
+    LOG_INFO("serial mode=snake build=snake_gesture_test_v31 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=sigmoid_multilabel threshold=%.2f map=%s direct=%d display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[TU %.3f TD %.3f TL %.3f TR %.3f] scores=[TU %.3f TD %.3f TL %.3f TR %.3f] state=%s\n",
              fps,
              stats->capture_ms * inv,
              stats->gesture_ms * inv,
@@ -984,10 +1110,12 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
              stats->last_food_x,
              stats->last_food_y,
              stats->last_roi_mode,
-             stats->last_norm_mode,
-             stats->last_color_mode,
-             stats->last_map_mode,
-             GestureCommandName(stats->last_command),
+              stats->last_norm_mode,
+              stats->last_color_mode,
+              kGestureConfThreshold,
+              stats->last_map_mode,
+              g_gesture_direct_test.load() ? 1 : 0,
+              GestureCommandName(stats->last_command),
              GestureCommandName(stats->last_raw_command),
              GestureCommandName(stats->last_stable_command),
              GestureCommandName(stats->last_held_command),
@@ -998,13 +1126,11 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
              stats->last_logits[1],
              stats->last_logits[2],
              stats->last_logits[3],
-             stats->last_logits[4],
-             stats->last_probs[0],
-             stats->last_probs[1],
-             stats->last_probs[2],
-             stats->last_probs[3],
-             stats->last_probs[4],
-             stats->last_state.c_str());
+              stats->last_probs[0],
+              stats->last_probs[1],
+              stats->last_probs[2],
+              stats->last_probs[3],
+              stats->last_state.c_str());
 
     stats->frames = 0;
     stats->capture_ms = 0.0;
@@ -1025,8 +1151,8 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
     stats->last_applied_command = GestureCommand::NONE;
     stats->last_direction = SnakeDirection::RIGHT;
     stats->last_confidence = 0.0f;
-    stats->last_logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    stats->last_probs = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    stats->last_logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    stats->last_probs = {0.0f, 0.0f, 0.0f, 0.0f};
     stats->last_state = "running";
     stats->last_roi_mode = "center";
     stats->last_norm_mode = "on";
@@ -1339,15 +1465,17 @@ int main() {
             const auto gesture_end = clock::now();
 
             const GestureCommand raw_gesture_command = gesture_result.command;
-            GestureCommand display_command =
-                GestureDisplayCommandFromScores(gesture_result, kGestureConfThreshold);
-            if (display_command != GestureCommand::NONE) {
-                last_display_command = display_command;
-            }
             const GestureMapMode gesture_map_mode = GetGestureMapMode();
+            const GestureCommand raw_display_command =
+                GestureDisplayCommandFromScores(gesture_result, kGestureConfThreshold);
             gesture_result.command =
                 MapGestureCommand(gesture_result.command, gesture_map_mode);
             gesture_result.valid = gesture_result.command != GestureCommand::NONE;
+            const GestureCommand display_command =
+                MapGestureCommand(raw_display_command, gesture_map_mode);
+            if (display_command != GestureCommand::NONE) {
+                last_display_command = display_command;
+            }
             const GestureCommand filtered_command = gesture_filter.Push(gesture_result);
             GestureCommand forced_command = GestureCommand::NONE;
             if (g_forced_snake_hold_frames.load() > 0) {
@@ -1357,15 +1485,28 @@ int main() {
             } else {
                 g_forced_snake_command.store(static_cast<int>(GestureCommand::NONE));
             }
+            const bool direct_test = g_gesture_direct_test.load();
             const GestureCommand stable_command =
-                forced_command != GestureCommand::NONE ? forced_command : filtered_command;
+                forced_command != GestureCommand::NONE
+                    ? forced_command
+                    : (direct_test
+                           ? (gesture_result.valid ? gesture_result.command : GestureCommand::NONE)
+                           : filtered_command);
             GestureCommand applied_command = GestureCommand::NONE;
             const GestureCommand latest_valid_command =
                 LatestValidCommand(stable_command, gesture_result);
-            if (latest_valid_command != GestureCommand::NONE) {
+            if (direct_test && stable_command == GestureCommand::NONE) {
+                // In diagnostic mode do not keep an old command alive through
+                // an invalid frame; this exposes the actual model response.
+                held_snake_command = GestureCommand::NONE;
+                last_stable_command = GestureCommand::NONE;
+                last_display_command = GestureCommand::NONE;
+            } else if (latest_valid_command != GestureCommand::NONE) {
                 held_snake_command = latest_valid_command;
             }
-            if (stable_command != GestureCommand::NONE) {
+            if (direct_test) {
+                last_stable_command = stable_command;
+            } else if (stable_command != GestureCommand::NONE) {
                 last_stable_command = stable_command;
                 if (snake_game.IsGameOver() && forced_command != GestureCommand::NONE) {
                     snake_game.Reset();

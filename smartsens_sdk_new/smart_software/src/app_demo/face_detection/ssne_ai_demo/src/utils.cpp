@@ -361,28 +361,118 @@ fdevice::COVER_ATTR_S MakeSolidRectCover(float x1, float y1, float x2, float y2,
     return cover;
 }
 
+bool ClampBoxToCanvas(const std::array<float, 4>& box,
+                      int canvas_width,
+                      int canvas_height,
+                      std::array<int, 4>* clamped_box) {
+    if (clamped_box == nullptr || canvas_width <= 0 || canvas_height <= 0) {
+        return false;
+    }
+
+    const int max_x = std::max(0, canvas_width - 1);
+    const int max_y = std::max(0, canvas_height - 1);
+    const int x1 = std::max(0, std::min(max_x, static_cast<int>(std::floor(std::min(box[0], box[2])))));
+    const int y1 = std::max(0, std::min(max_y, static_cast<int>(std::floor(std::min(box[1], box[3])))));
+    const int x2 = std::max(0, std::min(max_x, static_cast<int>(std::ceil(std::max(box[0], box[2])))));
+    const int y2 = std::max(0, std::min(max_y, static_cast<int>(std::ceil(std::max(box[1], box[3])))));
+
+    if (x2 <= x1 || y2 <= y1) {
+        return false;
+    }
+
+    *clamped_box = {x1, y1, x2, y2};
+    return true;
+}
+
+bool MakeHollowBoxCover(const std::array<float, 4>& box,
+                        int border,
+                        int color,
+                        int canvas_width,
+                        int canvas_height,
+                        fdevice::COVER_ATTR_S* cover) {
+    if (cover == nullptr) {
+        return false;
+    }
+
+    std::array<int, 4> clamped_box = {0, 0, 0, 0};
+    if (!ClampBoxToCanvas(box, canvas_width, canvas_height, &clamped_box)) {
+        return false;
+    }
+
+    const int x1 = clamped_box[0];
+    const int y1 = clamped_box[1];
+    const int x2 = clamped_box[2];
+    const int y2 = clamped_box[3];
+    const int box_w = x2 - x1;
+    const int box_h = y2 - y1;
+    const int safe_border = std::max(1, std::min(border, std::max(1, std::min(box_w, box_h) / 2 - 1)));
+
+    if (box_w <= safe_border * 2 || box_h <= safe_border * 2) {
+        return false;
+    }
+
+    *cover = {};
+    cover->colorIdx = color;
+    cover->eSolid = fdevice::TYPE_HOLLOW;
+    cover->alpha = fdevice::TYPE_ALPHA75;
+
+    cover->vertex_in.points[0] = {x1 + safe_border, y1 + safe_border};
+    cover->vertex_in.points[1] = {x1 + safe_border, y2 - safe_border};
+    cover->vertex_in.points[2] = {x2 - safe_border, y2 - safe_border};
+    cover->vertex_in.points[3] = {x2 - safe_border, y1 + safe_border};
+
+    cover->vertex_out.points[0] = {x1 - safe_border, y1 - safe_border};
+    cover->vertex_out.points[1] = {x1 - safe_border, y2 + safe_border};
+    cover->vertex_out.points[2] = {x2 + safe_border, y2 + safe_border};
+    cover->vertex_out.points[3] = {x2 + safe_border, y1 - safe_border};
+    return true;
+}
+
 fdevice::COVER_ATTR_S MakeHollowBoxCover(const std::array<float, 4>& box, int border, int color) {
     fdevice::COVER_ATTR_S cover = {};
-
-    const int x1 = static_cast<int>(box[0]);
-    const int y1 = static_cast<int>(box[1]);
-    const int x2 = static_cast<int>(box[2]);
-    const int y2 = static_cast<int>(box[3]);
-
-    cover.colorIdx = color;
-    cover.eSolid = fdevice::TYPE_HOLLOW;
-    cover.alpha = fdevice::TYPE_ALPHA75;
-
-    cover.vertex_in.points[0] = {x1 + border, y1 + border};
-    cover.vertex_in.points[1] = {x1 + border, y2 - border};
-    cover.vertex_in.points[2] = {x2 - border, y2 - border};
-    cover.vertex_in.points[3] = {x2 - border, y1 + border};
-
-    cover.vertex_out.points[0] = {x1 - border, y1 - border};
-    cover.vertex_out.points[1] = {x1 - border, y2 + border};
-    cover.vertex_out.points[2] = {x2 + border, y2 + border};
-    cover.vertex_out.points[3] = {x2 + border, y1 - border};
+    (void)MakeHollowBoxCover(box, border, color, 1 << 14, 1 << 14, &cover);
     return cover;
+}
+
+bool MakeHollowQuadRangle(const std::array<float, 4>& box,
+                          int border,
+                          int color,
+                          int canvas_width,
+                          int canvas_height,
+                          sst::device::osd::OsdQuadRangle* quad) {
+    if (quad == nullptr) {
+        return false;
+    }
+
+    std::array<int, 4> clamped_box = {0, 0, 0, 0};
+    if (!ClampBoxToCanvas(box, canvas_width, canvas_height, &clamped_box)) {
+        return false;
+    }
+
+    const int x1 = clamped_box[0];
+    const int y1 = clamped_box[1];
+    const int x2 = clamped_box[2];
+    const int y2 = clamped_box[3];
+    const int box_w = x2 - x1;
+    const int box_h = y2 - y1;
+    const int safe_border = std::max(1, std::min(border, std::max(1, std::min(box_w, box_h) / 2 - 1)));
+    if (box_w <= safe_border * 2 || box_h <= safe_border * 2) {
+        return false;
+    }
+
+    *quad = {};
+    quad->box = {
+        static_cast<float>(x1),
+        static_cast<float>(y1),
+        static_cast<float>(x2),
+        static_cast<float>(y2)
+    };
+    quad->border = safe_border;
+    quad->layer_id = VISUALIZER::DETECTION_LAYER_ID;
+    quad->type = fdevice::TYPE_HOLLOW;
+    quad->alpha = fdevice::TYPE_ALPHA75;
+    quad->color = color;
+    return true;
 }
 
 fdevice::COVER_ATTR_S MakeLineCover(float x1, float y1, float x2, float y2, float thickness, int color);
@@ -712,18 +802,33 @@ void VISUALIZER::Draw(const std::vector<std::array<float, 4>>& boxes) {
 }
 
 void VISUALIZER::Draw(const std::vector<ObjectDetection>& detections) {
+    std::vector<sst::device::osd::OsdQuadRangle> quads;
     std::vector<fdevice::COVER_ATTR_S> covers;
+    quads.reserve(detections.size());
     covers.reserve(detections.size() * 4);
 
     for (const auto& det : detections) {
         const int border = IsAlertClass(det.class_id) ? 5 : 3;
-        covers.emplace_back(MakeHollowBoxCover(det.box, border, GetDetectionColorIndex(det)));
+        sst::device::osd::OsdQuadRangle quad;
+        if (MakeHollowQuadRangle(det.box, border, GetDetectionColorIndex(det),
+                                 m_width, m_height, &quad)) {
+            quads.emplace_back(quad);
+        }
         if (IsAlertClass(det.class_id)) {
             AppendWarningIconCovers(det.box, &covers);
         }
     }
 
-    osd_device.DrawCovers(covers, DETECTION_LAYER_ID);
+    if (quads.empty() && covers.empty()) {
+        osd_device.ClearLayer(DETECTION_LAYER_ID);
+        return;
+    }
+    if (!quads.empty()) {
+        osd_device.Draw(quads, DETECTION_LAYER_ID);
+    }
+    if (!covers.empty()) {
+        osd_device.DrawCovers(covers, DETECTION_LAYER_ID);
+    }
 }
 
 void VISUALIZER::Draw(const FaceResult& face_result) {
@@ -743,7 +848,10 @@ void VISUALIZER::Draw(const FaceResult& face_result) {
         };
         const int color = GetFaceIdentityColorIndex(det.identity);
         const int border = det.identity == FaceIdentity::kStranger ? 5 : 3;
-        covers.emplace_back(MakeHollowBoxCover(box, border, color));
+        fdevice::COVER_ATTR_S cover = {};
+        if (MakeHollowBoxCover(box, border, color, m_width, m_height, &cover)) {
+            covers.emplace_back(cover);
+        }
 
         const float badge_left = std::max(0.0f, box[0] - 26.0f);
         const float badge_top = std::max(0.0f, box[1] - 26.0f);
@@ -783,11 +891,16 @@ void VISUALIZER::Draw(const std::vector<PoseDetection>& detections, float kpt_co
         {{11, 13}}, {{13, 15}}, {{12, 14}}, {{14, 16}}
     }};
 
+    std::vector<sst::device::osd::OsdQuadRangle> quads;
     std::vector<fdevice::COVER_ATTR_S> covers;
+    quads.reserve(detections.size());
     covers.reserve(detections.size() * 40);
 
     for (const auto& det : detections) {
-        covers.emplace_back(MakeHollowBoxCover(det.box, 3, kBoxColor));
+        sst::device::osd::OsdQuadRangle quad;
+        if (MakeHollowQuadRangle(det.box, 3, kBoxColor, m_width, m_height, &quad)) {
+            quads.emplace_back(quad);
+        }
 
         for (const auto& edge : kSkeleton) {
             const PoseKeyPoint& p1 = det.keypoints[edge[0]];
@@ -821,7 +934,16 @@ void VISUALIZER::Draw(const std::vector<PoseDetection>& detections, float kpt_co
         }
     }
 
-    osd_device.DrawCovers(covers, DETECTION_LAYER_ID);
+    if (quads.empty() && covers.empty()) {
+        osd_device.ClearLayer(DETECTION_LAYER_ID);
+        return;
+    }
+    if (!quads.empty()) {
+        osd_device.Draw(quads, DETECTION_LAYER_ID);
+    }
+    if (!covers.empty()) {
+        osd_device.DrawCovers(covers, DETECTION_LAYER_ID);
+    }
 }
 
 void VISUALIZER::Draw(const std::vector<ObjectDetection>& detections,
@@ -834,19 +956,28 @@ void VISUALIZER::Draw(const std::vector<ObjectDetection>& detections,
         {{11, 13}}, {{13, 15}}, {{12, 14}}, {{14, 16}}
     }};
 
+    std::vector<sst::device::osd::OsdQuadRangle> quads;
     std::vector<fdevice::COVER_ATTR_S> covers;
+    quads.reserve(detections.size() + poses.size());
     covers.reserve(detections.size() + poses.size() * 40);
 
     for (const auto& det : detections) {
         const int border = IsAlertClass(det.class_id) ? 5 : 3;
-        covers.emplace_back(MakeHollowBoxCover(det.box, border, GetDetectionColorIndex(det)));
+        sst::device::osd::OsdQuadRangle quad;
+        if (MakeHollowQuadRangle(det.box, border, GetDetectionColorIndex(det),
+                                 m_width, m_height, &quad)) {
+            quads.emplace_back(quad);
+        }
         if (IsAlertClass(det.class_id)) {
             AppendWarningIconCovers(det.box, &covers);
         }
     }
 
     for (const auto& det : poses) {
-        covers.emplace_back(MakeHollowBoxCover(det.box, 3, kBoxColor));
+        sst::device::osd::OsdQuadRangle quad;
+        if (MakeHollowQuadRangle(det.box, 3, kBoxColor, m_width, m_height, &quad)) {
+            quads.emplace_back(quad);
+        }
 
         for (const auto& edge : kSkeleton) {
             const PoseKeyPoint& p1 = det.keypoints[edge[0]];
@@ -880,7 +1011,17 @@ void VISUALIZER::Draw(const std::vector<ObjectDetection>& detections,
         }
     }
 
-    osd_device.DrawCovers(covers, DETECTION_LAYER_ID);
+    if (quads.empty() && covers.empty()) {
+        osd_device.ClearLayer(DETECTION_LAYER_ID);
+        return;
+    }
+    osd_device.ClearLayer(DETECTION_LAYER_ID);
+    if (!quads.empty()) {
+        osd_device.Draw(quads, DETECTION_LAYER_ID);
+    }
+    if (!covers.empty()) {
+        osd_device.DrawCovers(covers, DETECTION_LAYER_ID);
+    }
 }
 
 #ifdef SSNE_AI_DEMO_HAS_OPENCV
