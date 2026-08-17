@@ -1,0 +1,305 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Home Alarm Dashboard</title>
+  <style>
+    :root {
+      --fire: #e53935;
+      --intrusion: #fb8c00;
+      --fall: #1e88e5;
+      --default: #757575;
+      --bg: #f4f5f7;
+      --card: #ffffff;
+      --border: #e3e5e8;
+      --text: #1f2329;
+      --muted: #6b7280;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      background: #1f2329;
+      color: #fff;
+      padding: 16px 20px;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: .3px;
+    }
+    header .sub {
+      margin-top: 4px;
+      font-size: 13px;
+      color: #c4c9d0;
+    }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 16px;
+    }
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--default);
+    }
+    .dot.ok { background: #2e9e44; }
+    .dot.bad { background: var(--fire); }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+    .latest {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 6px;
+      color: #fff;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    .badge.fire { background: var(--fire); }
+    .badge.intrusion { background: var(--intrusion); }
+    .badge.fall { background: var(--fall); }
+    .badge.default { background: var(--default); }
+    .latest .info { font-size: 15px; }
+    .latest .meta { color: var(--muted); font-size: 13px; }
+    .empty {
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+      padding: 20px 0;
+    }
+    ul.alarms {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    ul.alarms li {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 4px;
+      border-bottom: 1px solid var(--border);
+      border-left: 4px solid var(--default);
+      padding-left: 12px;
+    }
+    ul.alarms li:last-child { border-bottom: none; }
+    ul.alarms li.fire { border-left-color: var(--fire); }
+    ul.alarms li.intrusion { border-left-color: var(--intrusion); }
+    ul.alarms li.fall { border-left-color: var(--fall); }
+    ul.alarms .row-main { flex: 1; min-width: 0; }
+    ul.alarms .row-title { font-size: 14px; font-weight: 500; }
+    ul.alarms .row-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    ul.alarms .row-time { font-size: 12px; color: var(--muted); white-space: nowrap; }
+    @media (max-width: 480px) {
+      .container { padding: 12px; }
+      header h1 { font-size: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Home Alarm Dashboard</h1>
+    <div class="sub">家庭报警实时监控 · home/a1-001/alarm</div>
+  </header>
+
+  <div class="container">
+    <div class="status-row">
+      <span class="pill"><span class="dot" id="dot-svc"></span>服务 <span id="svc-text">检测中…</span></span>
+      <span class="pill"><span class="dot" id="dot-mqtt"></span>MQTT <span id="mqtt-text">检测中…</span></span>
+      <span class="pill"><span class="dot" id="dot-ws"></span>实时连接 <span id="ws-text">连接中…</span></span>
+    </div>
+
+    <div class="card">
+      <h2>最近一条告警</h2>
+      <div class="latest" id="latest">
+        <div class="empty">暂无告警</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>最近报警列表</h2>
+      <ul class="alarms" id="alarm-list">
+        <li><div class="empty">暂无数据</div></li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const TYPE_COLORS = { fire: "fire", intrusion: "intrusion", fall: "fall" };
+
+    function escapeHtml(s) {
+      return String(s ?? "").replace(/[&<>"']/g, c => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[c]));
+    }
+
+    function badgeClass(type) {
+      return TYPE_COLORS[type] || "default";
+    }
+
+    function formatTime(serverTime) {
+      if (!serverTime) return "-";
+      const d = new Date(serverTime);
+      if (isNaN(d.getTime())) return serverTime;
+      return d.toLocaleString("zh-CN", { hour12: false });
+    }
+
+    function setDot(id, ok) {
+      const el = document.getElementById(id);
+      el.className = "dot " + (ok ? "ok" : "bad");
+    }
+
+    function renderLatest(alarm) {
+      const box = document.getElementById("latest");
+      if (!alarm) {
+        box.innerHTML = '<div class="empty">暂无告警</div>';
+        return;
+      }
+      const cls = badgeClass(alarm.alarm_type);
+      box.innerHTML =
+        '<span class="badge ' + cls + '">' + escapeHtml(alarm.alarm_type) + '</span>' +
+        '<div class="info">' +
+          '<div><strong>' + escapeHtml(alarm.device_id) + '</strong> · ' +
+            '状态 <strong>' + escapeHtml(alarm.alarm_state) + '</strong></div>' +
+          '<div class="meta">接收时间 ' + escapeHtml(formatTime(alarm.server_time)) + '</div>' +
+        '</div>';
+    }
+
+    function renderList(alarms) {
+      const ul = document.getElementById("alarm-list");
+      if (!alarms.length) {
+        ul.innerHTML = '<li><div class="empty">暂无数据</div></li>';
+        return;
+      }
+      ul.innerHTML = "";
+      alarms.forEach(a => ul.appendChild(makeItem(a)));
+    }
+
+    function makeItem(a) {
+      const li = document.createElement("li");
+      const cls = badgeClass(a.alarm_type);
+      li.className = cls;
+      const ts = a.ts_millis ? new Date(a.ts_millis) : null;
+      const deviceTime = ts && !isNaN(ts.getTime())
+        ? ts.toLocaleString("zh-CN", { hour12: false }) : "-";
+      li.innerHTML =
+        '<div class="row-main">' +
+          '<div class="row-title">' +
+            '<span class="badge ' + cls + '">' + escapeHtml(a.alarm_type) + '</span> ' +
+            escapeHtml(a.device_id) + ' · ' + escapeHtml(a.alarm_state) +
+          '</div>' +
+          '<div class="row-sub">接收 ' + escapeHtml(formatTime(a.server_time)) +
+            ' · 设备时间 ' + escapeHtml(deviceTime) + '</div>' +
+        '</div>' +
+        '<div class="row-time">#' + a.id + '</div>';
+      return li;
+    }
+
+    function prependAlarm(a) {
+      const ul = document.getElementById("alarm-list");
+      const empty = ul.querySelector(".empty");
+      if (empty) ul.innerHTML = "";
+      ul.insertBefore(makeItem(a), ul.firstChild);
+      renderLatest(a);
+    }
+
+    async function fetchHealth() {
+      try {
+        const res = await fetch("/api/health");
+        const data = await res.json();
+        setDot("dot-svc", data.status === "ok");
+        document.getElementById("svc-text").textContent = data.status === "ok" ? "正常" : "异常";
+        const mqttOk = !!data.mqtt_connected;
+        setDot("dot-mqtt", mqttOk);
+        document.getElementById("mqtt-text").textContent = mqttOk ? "已连接" : "未连接";
+      } catch (e) {
+        setDot("dot-svc", false);
+        document.getElementById("svc-text").textContent = "异常";
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        const res = await fetch("/api/alarms");
+        const alarms = await res.json();
+        renderList(alarms);
+        renderLatest(alarms[0] || null);
+      } catch (e) {
+        console.error("加载历史失败", e);
+      }
+    }
+
+    function connectWS() {
+      const proto = location.protocol === "https:" ? "wss://" : "ws://";
+      const url = proto + location.host + "/ws";
+      const ws = new WebSocket(url);
+
+      ws.onopen = () => {
+        setDot("dot-ws", true);
+        document.getElementById("ws-text").textContent = "已连接";
+      };
+      ws.onmessage = (evt) => {
+        try {
+          const alarm = JSON.parse(evt.data);
+          prependAlarm(alarm);
+        } catch (e) {
+          console.error("WS 消息解析失败", e);
+        }
+      };
+      ws.onclose = () => {
+        setDot("dot-ws", false);
+        document.getElementById("ws-text").textContent = "已断开";
+        setTimeout(connectWS, 3000);
+      };
+      ws.onerror = () => ws.close();
+    }
+
+    fetchHealth();
+    loadHistory();
+    connectWS();
+    setInterval(fetchHealth, 5000);
+  </script>
+</body>
+</html>
