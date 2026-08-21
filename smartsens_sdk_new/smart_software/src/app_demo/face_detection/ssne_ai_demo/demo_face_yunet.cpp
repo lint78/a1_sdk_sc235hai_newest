@@ -1172,7 +1172,7 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
 
     const double inv = 1.0 / static_cast<double>(stats->frames);
     const double fps = static_cast<double>(stats->frames) * 1000.0 / elapsed_ms;
-    LOG_INFO("serial mode=snake build=snake_gesture_test_v33 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=sigmoid_multilabel threshold=%.2f map=%s direct=%d display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[D %.3f L %.3f R %.3f U %.3f N %.3f] scores=[D %.3f L %.3f R %.3f U %.3f N %.3f] state=%s\n",
+    LOG_INFO("serial mode=snake build=snake_gesture_test_v34 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=softmax_multiclass threshold=%.2f map=%s direct=%d display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[D %.3f L %.3f R %.3f U %.3f N %.3f] scores=[D %.3f L %.3f R %.3f U %.3f N %.3f] state=%s\n",
              fps,
              stats->capture_ms * inv,
              stats->gesture_ms * inv,
@@ -1556,9 +1556,9 @@ int main() {
             gesture_result.valid = gesture_result.command != GestureCommand::NONE;
             const GestureCommand display_command =
                 MapGestureCommand(raw_display_command, gesture_map_mode);
-            if (display_command != GestureCommand::NONE) {
-                last_display_command = display_command;
-            }
+            // Display the current frame result. Do not retain a previous
+            // direction when the current model result is NONE.
+            last_display_command = display_command;
             const GestureCommand filtered_command = gesture_filter.Push(gesture_result);
             GestureCommand forced_command = GestureCommand::NONE;
             if (g_forced_snake_hold_frames.load() > 0) {

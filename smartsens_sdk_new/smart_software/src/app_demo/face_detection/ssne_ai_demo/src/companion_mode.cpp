@@ -618,13 +618,22 @@ bool DumpInputTensorToPpm(ssne_tensor_t tensor, const char* path) {
     return true;
 }
 
-float Sigmoid(float value) {
-    if (value >= 0.0f) {
-        const float exp_neg = std::exp(-value);
-        return 1.0f / (1.0f + exp_neg);
+std::array<float, 5> Softmax(const std::array<float, 5>& logits) {
+    // Subtract the largest logit to keep exp() finite on the CPU.
+    const float max_logit = *std::max_element(logits.begin(), logits.end());
+    std::array<float, 5> probabilities = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    float denominator = 0.0f;
+    for (size_t i = 0; i < logits.size(); ++i) {
+        probabilities[i] = std::exp(logits[i] - max_logit);
+        denominator += probabilities[i];
     }
-    const float exp_pos = std::exp(value);
-    return exp_pos / (1.0f + exp_pos);
+    if (denominator <= 0.0f || !std::isfinite(denominator)) {
+        return {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    }
+    for (float& probability : probabilities) {
+        probability /= denominator;
+    }
+    return probabilities;
 }
 
 GestureCommand GestureClassIndexToCommand(int class_index) {
@@ -953,11 +962,9 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
         return;
     }
 
-    std::array<float, 5> scores = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-    for (int i = 0; i < 5; ++i) {
-        scores[static_cast<size_t>(i)] =
-            Sigmoid(logits[static_cast<size_t>(i)]);
-    }
+    // This is a mutually-exclusive five-class classifier, not a multilabel
+    // head. Use one softmax over [down,left,right,up,none].
+    const std::array<float, 5> scores = Softmax(logits);
 
     int best_index = 0;
     for (int i = 1; i < 5; ++i) {
