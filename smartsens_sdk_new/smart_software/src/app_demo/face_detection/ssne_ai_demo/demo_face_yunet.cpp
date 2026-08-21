@@ -313,6 +313,82 @@ bool HasFireDetection(const std::vector<ObjectDetection>& detections) {
                        });
 }
 
+// Use the captured Y plane as a light sanity check for fire detections. The
+// detector input may be enhanced, but this check must use the original frame.
+bool IsFireBrightnessPlausible(ssne_tensor_t tensor,
+                               const std::array<float, 4>& original_box,
+                               int crop_offset_x) {
+    if (get_data(tensor) == nullptr || get_data_format(tensor) != SSNE_YUV422_16) {
+        return true;
+    }
+
+    const uint32_t width = get_width(tensor);
+    const uint32_t height = get_height(tensor);
+    const size_t mem_size = get_mem_size(tensor);
+    if (width == 0 || height == 0 || mem_size == 0) {
+        return true;
+    }
+
+    const size_t row_stride = mem_size / static_cast<size_t>(height);
+    if (row_stride < static_cast<size_t>(width) * 2U) {
+        return true;
+    }
+
+    // Detection boxes are in the original 1920x1080 coordinates; the raw
+    // sensor tensor is the centered 1080x1080 crop used by the models.
+    const int left = std::max(0, static_cast<int>(std::floor(original_box[0])) - crop_offset_x);
+    const int top = std::max(0, static_cast<int>(std::floor(original_box[1])));
+    const int right = std::min(static_cast<int>(width),
+                               static_cast<int>(std::ceil(original_box[2])) - crop_offset_x);
+    const int bottom = std::min(static_cast<int>(height),
+                                static_cast<int>(std::ceil(original_box[3])));
+    if (right <= left || bottom <= top) {
+        return true;
+    }
+
+    const uint32_t step_x = std::max<uint32_t>(1, static_cast<uint32_t>(right - left) / 32U);
+    const uint32_t step_y = std::max<uint32_t>(1, static_cast<uint32_t>(bottom - top) / 24U);
+    const uint8_t* data = static_cast<const uint8_t*>(get_data(tensor));
+    uint32_t samples = 0;
+    uint32_t bright_pixels = 0;
+    uint32_t hot_pixels = 0;
+    for (int y = top; y < bottom; y += static_cast<int>(step_y)) {
+        const uint8_t* row = data + static_cast<size_t>(y) * row_stride;
+        for (int x = left; x < right; x += static_cast<int>(step_x)) {
+            // SSNE_YUV422_16 is packed YUV422: Y0 U Y1 V. Only even bytes
+            // are luma; the intervening bytes are chroma and must be ignored.
+            const uint8_t raw_y = row[static_cast<size_t>(x) * 2U];
+            bright_pixels += raw_y >= 128U ? 1U : 0U;
+            hot_pixels += raw_y >= 180U ? 1U : 0U;
+            ++samples;
+        }
+    }
+    if (samples == 0) {
+        return true;
+    }
+
+    const float bright_ratio = static_cast<float>(bright_pixels) /
+                               static_cast<float>(samples);
+    const bool enough_bright_area = bright_ratio >= 0.02f;
+    const bool has_small_bright_core = hot_pixels >= 2U && bright_ratio >= 0.005f;
+    return enough_bright_area || has_small_bright_core;
+}
+
+void ApplyFireBrightnessFallback(ssne_tensor_t raw_tensor,
+                                 int crop_offset_x,
+                                 std::vector<ObjectDetection>* detections) {
+    if (detections == nullptr) {
+        return;
+    }
+    detections->erase(
+        std::remove_if(detections->begin(), detections->end(),
+                       [raw_tensor, crop_offset_x](const ObjectDetection& det) {
+                           return det.class_id == kFireClassId &&
+                                  !IsFireBrightnessPlausible(raw_tensor, det.box, crop_offset_x);
+                       }),
+        detections->end());
+}
+
 bool HasIntrusionDetection(const std::vector<ObjectDetection>& detections) {
     return std::any_of(detections.begin(),
                        detections.end(),
@@ -625,7 +701,7 @@ GestureCommand MapGestureCommand(GestureCommand command, GestureMapMode mode) {
 GestureCommand GestureDisplayCommandFromScores(const GestureResult& result,
                                                float conf_threshold) {
     int best_index = 0;
-    for (int i = 1; i < 4; ++i) {
+    for (int i = 1; i < 5; ++i) {
         if (result.probabilities[static_cast<size_t>(i)] >
             result.probabilities[static_cast<size_t>(best_index)]) {
             best_index = i;
@@ -633,20 +709,20 @@ GestureCommand GestureDisplayCommandFromScores(const GestureResult& result,
     }
 
     const float best_score = result.probabilities[static_cast<size_t>(best_index)];
-    if (best_score < conf_threshold) {
+    if (best_index == 4 || best_score < conf_threshold) {
         return GestureCommand::NONE;
     }
 
     // The icon should reflect the model class semantics, not the control remap.
     switch (best_index) {
         case 0:
-            return GestureCommand::TU;
-        case 1:
             return GestureCommand::TD;
-        case 2:
+        case 1:
             return GestureCommand::TL;
-        case 3:
+        case 2:
             return GestureCommand::TR;
+        case 3:
+            return GestureCommand::TU;
         default:
             return GestureCommand::NONE;
     }
@@ -735,6 +811,7 @@ std::atomic<int> g_forced_snake_command(static_cast<int>(GestureCommand::NONE));
 std::atomic<int> g_forced_snake_hold_frames(0);
 std::atomic<int> g_gesture_roi_mode(static_cast<int>(GestureRoiMode::CENTER));
 std::atomic<bool> g_gesture_roi_changed(false);
+// Preserve the existing board default; switch explicitly with the serial command.
 std::atomic<bool> g_gesture_normalize_enabled(false);
 std::atomic<int> g_gesture_input_format(SSNE_RGB);
 // Keep the diagnostic build in raw mode. Calibration can be enabled after
@@ -743,7 +820,8 @@ std::atomic<int> g_gesture_map_mode(static_cast<int>(GestureMapMode::RAW));
 std::atomic<bool> g_companion_reinit_requested(false);
 // Test mode bypasses temporal filtering so model output can be compared
 // directly with the direction applied to the snake.
-std::atomic<bool> g_gesture_direct_test(true);
+// Production default uses temporal confirmation; enable direct mode only for diagnosis.
+std::atomic<bool> g_gesture_direct_test(false);
 
 DemoMode GetDemoMode() {
     return static_cast<DemoMode>(g_demo_mode.load());
@@ -789,20 +867,21 @@ void SetGestureMapMode(GestureMapMode mode) {
 }
 
 void PrintCompanionHelp() {
-    std::cout << "Demo mode commands:\n";
-    std::cout << "  hu | guard | yolo | animal | pose    switch to family safety / animal+pose mode\n";
-    std::cout << "  pei | snake | game | companion       switch to companion gesture mode\n";
-    std::cout << "  stranger | face | mode stranger      switch to stranger recognition mode\n";
-    std::cout << "  snake reset                         restart snake game\n";
-    std::cout << "  snake pause                         pause snake game\n";
-    std::cout << "  snake resume                        resume snake game\n";
-    std::cout << "  up/down/left/right                  force snake direction for debug\n";
-    std::cout << "  roi center|full                     switch gesture ROI for debug (default center)\n";
-    std::cout << "  norm on|off                         rebuild gesture preprocess normalize (gesture default off for mobilenet debug)\n";
-    std::cout << "  color rgb|bgr                       rebuild gesture input color order\n";
-    std::cout << "  gmap raw|left_to_up|right_to_up|flip_x|flip_y  select preset gesture mapping (default raw)\n";
-    std::cout << "  gmap TU TR                         map model TU to snake TR/RIGHT\n";
-    std::cout << "  direct on|off                      bypass gesture temporal filter for diagnosis (default on)\n";
+    std::cout << "mode guard|companion|stranger\n";
+    std::cout << "roi center|full\n";
+    std::cout << "snake reset\n";
+    std::cout << "snake pause\n";
+    std::cout << "snake resume\n";
+    std::cout << "snake up|down|left|right\n";
+    std::cout << "gesture direct on|off\n";
+    std::cout << "gesture normalize on|off\n";
+    std::cout << "gesture color rgb|bgr\n";
+    std::cout << "gesture map raw\n";
+    std::cout << "gesture map left_to_up\n";
+    std::cout << "gesture map right_to_up\n";
+    std::cout << "gesture map flip_x\n";
+    std::cout << "gesture map flip_y\n";
+    std::cout << "gesture map <up|down|left|right> <up|down|left|right>\n";
 }
 
 bool HandleDemoCommand(const std::string& line) {
@@ -811,86 +890,82 @@ bool HandleDemoCommand(const std::string& line) {
         return false;
     }
 
-    if (cmd == "hu" || cmd == "guard" || cmd == "yolo" || cmd == "protect" ||
-        cmd == "animal" || cmd == "pose" ||
-        cmd == "mode hu" || cmd == "mode guard" || cmd == "mode yolo" ||
-        cmd == "mode protect" || cmd == "mode animal" || cmd == "mode pose") {
+    if (cmd == "mode guard") {
         SetDemoMode(DemoMode::GUARD);
-        std::cout << "Switched to HU/guard mode (YOLO)." << std::endl;
+        std::cout << "Switched to guard mode (YOLO)." << std::endl;
         return true;
     }
-    if (cmd == "pei" || cmd == "companion" || cmd == "gesture" || cmd == "snake" || cmd == "game" || cmd == "mode pei" || cmd == "mode companion" || cmd == "mode gesture" || cmd == "mode snake") {
+    if (cmd == "mode companion") {
         SetDemoMode(DemoMode::COMPANION_SNAKE);
         g_snake_reset_requested.store(true);
-        std::cout << "Switched to PEI/companion mode (gesture)." << std::endl;
+        std::cout << "Switched to companion mode (gesture/snake)." << std::endl;
         return true;
     }
-    if (cmd == "stranger" || cmd == "face" || cmd == "stranger face" ||
-        cmd == "face stranger" || cmd == "mode stranger" || cmd == "mode face" ||
-        cmd == "mode stranger_face" || cmd == "mode stranger-face") {
+    if (cmd == "mode stranger") {
         SetDemoMode(DemoMode::STRANGER_FACE);
-        std::cout << "Switched to stranger face mode (MobileFaceNet RGB112 identity model)." << std::endl;
+        std::cout << "Switched to stranger mode (MobileFaceNet RGB112 identity model)." << std::endl;
         return true;
     }
-    if (cmd == "snake reset" || cmd == "game reset") {
+    if (cmd == "snake reset") {
         g_snake_reset_requested.store(true);
         std::cout << "Snake reset requested." << std::endl;
         return true;
     }
-    if (cmd == "snake pause" || cmd == "game pause") {
+    if (cmd == "snake pause") {
         g_snake_pause_requested.store(true);
         std::cout << "Snake pause requested." << std::endl;
         return true;
     }
-    if (cmd == "direct on" || cmd == "snake direct on" || cmd == "gesture direct on") {
+    if (cmd == "gesture direct on") {
         g_gesture_direct_test.store(true);
         std::cout << "Gesture direct test: on." << std::endl;
         return true;
     }
-    if (cmd == "direct off" || cmd == "snake direct off" || cmd == "gesture direct off") {
+    if (cmd == "gesture direct off") {
         g_gesture_direct_test.store(false);
         std::cout << "Gesture direct test: off." << std::endl;
         return true;
     }
-    if (cmd == "roi center" || cmd == "roicenter" || cmd == "centerroi" || cmd == "roi_center" || cmd == "gesture roi center") {
+    if (cmd == "roi center") {
         SetGestureRoiMode(GestureRoiMode::CENTER);
         std::cout << "Gesture ROI mode: center." << std::endl;
         return true;
     }
-    if (cmd == "roi full" || cmd == "roifull" || cmd == "fullroi" || cmd == "full roi" || cmd == "roi_full" || cmd == "gesture roi full") {
+    if (cmd == "roi full") {
         SetGestureRoiMode(GestureRoiMode::FULL);
         std::cout << "Gesture ROI mode: full." << std::endl;
         return true;
     }
-    if (cmd == "norm on" || cmd == "normalize on" || cmd == "normal on") {
+    if (cmd == "gesture normalize on") {
         SetGestureNormalizeEnabled(true);
         std::cout << "Gesture normalize: on. Reinitializing companion model." << std::endl;
         return true;
     }
-    if (cmd == "norm off" || cmd == "normalize off" || cmd == "normal off") {
+    if (cmd == "gesture normalize off") {
         SetGestureNormalizeEnabled(false);
         std::cout << "Gesture normalize: off. Reinitializing companion model." << std::endl;
         return true;
     }
-    if (cmd == "color rgb" || cmd == "rgb" || cmd == "gesture rgb") {
+    if (cmd == "gesture color rgb") {
         SetGestureInputFormat(SSNE_RGB);
         std::cout << "Gesture input color: RGB. Reinitializing companion model." << std::endl;
         return true;
     }
-    if (cmd == "color bgr" || cmd == "bgr" || cmd == "gesture bgr") {
+    if (cmd == "gesture color bgr") {
         SetGestureInputFormat(SSNE_BGR);
         std::cout << "Gesture input color: BGR. Reinitializing companion model." << std::endl;
         return true;
     }
-    if (cmd.rfind("gmap ", 0) == 0 || cmd.rfind("map ", 0) == 0) {
+    if (cmd.rfind("gesture map ", 0) == 0) {
         std::istringstream mapping_stream(cmd);
         std::string mapping_prefix;
+        std::string mapping_action;
         std::string source_token;
         std::string target_token;
-        mapping_stream >> mapping_prefix >> source_token >> target_token;
+        mapping_stream >> mapping_prefix >> mapping_action >> source_token >> target_token;
         const GestureCommand source = GestureCommandFromToken(source_token);
         const GestureCommand target = GestureCommandFromToken(target_token);
-        if ((mapping_prefix == "gmap" || mapping_prefix == "map") &&
+        if (mapping_prefix == "gesture" && mapping_action == "map" &&
             source != GestureCommand::NONE && target != GestureCommand::NONE) {
             SetCustomGestureMapping(source, target);
             SetGestureMapMode(GestureMapMode::CUSTOM);
@@ -900,61 +975,61 @@ bool HandleDemoCommand(const std::string& line) {
             return true;
         }
     }
-    if (cmd == "gmap raw" || cmd == "map raw" || cmd == "gesture map raw") {
+    if (cmd == "gesture map raw") {
         SetGestureMapMode(GestureMapMode::RAW);
         std::cout << "Gesture map mode: raw." << std::endl;
         return true;
     }
-    if (cmd == "gmap left_to_up" || cmd == "gmap left2up" || cmd == "map left_to_up" || cmd == "gesture map left_to_up") {
+    if (cmd == "gesture map left_to_up") {
         SetGestureMapMode(GestureMapMode::LEFT_TO_UP);
         std::cout << "Gesture map mode: left_to_up." << std::endl;
         return true;
     }
-    if (cmd == "gmap right_to_up" || cmd == "gmap right2up" || cmd == "map right_to_up" || cmd == "gesture map right_to_up") {
+    if (cmd == "gesture map right_to_up") {
         SetGestureMapMode(GestureMapMode::RIGHT_TO_UP);
         std::cout << "Gesture map mode: right_to_up." << std::endl;
         return true;
     }
-    if (cmd == "gmap flip_x" || cmd == "gmap flipx" || cmd == "map flip_x" || cmd == "gesture map flip_x") {
+    if (cmd == "gesture map flip_x") {
         SetGestureMapMode(GestureMapMode::FLIP_X);
         std::cout << "Gesture map mode: flip_x." << std::endl;
         return true;
     }
-    if (cmd == "gmap flip_y" || cmd == "gmap flipy" || cmd == "map flip_y" || cmd == "gesture map flip_y") {
+    if (cmd == "gesture map flip_y") {
         SetGestureMapMode(GestureMapMode::FLIP_Y);
         std::cout << "Gesture map mode: flip_y." << std::endl;
         return true;
     }
-    if (cmd == "snake resume" || cmd == "game resume") {
+    if (cmd == "snake resume") {
         g_snake_resume_requested.store(true);
         std::cout << "Snake resume requested." << std::endl;
         return true;
     }
-    if (cmd == "up" || cmd == "snake up" || cmd == "game up") {
+    if (cmd == "snake up") {
         g_forced_snake_command.store(static_cast<int>(GestureCommand::TU));
         g_forced_snake_hold_frames.store(60);
         std::cout << "Forced snake direction: up." << std::endl;
         return true;
     }
-    if (cmd == "down" || cmd == "snake down" || cmd == "game down") {
+    if (cmd == "snake down") {
         g_forced_snake_command.store(static_cast<int>(GestureCommand::TD));
         g_forced_snake_hold_frames.store(60);
         std::cout << "Forced snake direction: down." << std::endl;
         return true;
     }
-    if (cmd == "left" || cmd == "snake left" || cmd == "game left") {
+    if (cmd == "snake left") {
         g_forced_snake_command.store(static_cast<int>(GestureCommand::TL));
         g_forced_snake_hold_frames.store(60);
         std::cout << "Forced snake direction: left." << std::endl;
         return true;
     }
-    if (cmd == "right" || cmd == "snake right" || cmd == "game right") {
+    if (cmd == "snake right") {
         g_forced_snake_command.store(static_cast<int>(GestureCommand::TR));
         g_forced_snake_hold_frames.store(60);
         std::cout << "Forced snake direction: right." << std::endl;
         return true;
     }
-    if (cmd == "mode" || cmd == "snake help" || cmd == "game help") {
+    if (cmd == "help") {
         PrintCompanionHelp();
         return true;
     }
@@ -1024,8 +1099,8 @@ struct SnakeLoopPerfStats {
     GestureCommand last_applied_command = GestureCommand::NONE;
     SnakeDirection last_direction = SnakeDirection::RIGHT;
     float last_confidence = 0.0f;
-    std::array<float, 4> last_logits = {0.0f, 0.0f, 0.0f, 0.0f};
-    std::array<float, 4> last_probs = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 5> last_logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 5> last_probs = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     std::string last_state = "running";
     const char* last_roi_mode = "center";
     const char* last_norm_mode = "on";
@@ -1096,7 +1171,7 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
 
     const double inv = 1.0 / static_cast<double>(stats->frames);
     const double fps = static_cast<double>(stats->frames) * 1000.0 / elapsed_ms;
-    LOG_INFO("serial mode=snake build=snake_gesture_test_v31 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=sigmoid_multilabel threshold=%.2f map=%s direct=%d display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[TU %.3f TD %.3f TL %.3f TR %.3f] scores=[TU %.3f TD %.3f TL %.3f TR %.3f] state=%s\n",
+    LOG_INFO("serial mode=snake build=snake_gesture_test_v33 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=sigmoid_multilabel threshold=%.2f map=%s direct=%d display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[D %.3f L %.3f R %.3f U %.3f N %.3f] scores=[D %.3f L %.3f R %.3f U %.3f N %.3f] state=%s\n",
              fps,
              stats->capture_ms * inv,
              stats->gesture_ms * inv,
@@ -1125,11 +1200,13 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
              stats->last_logits[0],
              stats->last_logits[1],
              stats->last_logits[2],
-             stats->last_logits[3],
+              stats->last_logits[3],
+              stats->last_logits[4],
               stats->last_probs[0],
               stats->last_probs[1],
               stats->last_probs[2],
               stats->last_probs[3],
+              stats->last_probs[4],
               stats->last_state.c_str());
 
     stats->frames = 0;
@@ -1151,11 +1228,11 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
     stats->last_applied_command = GestureCommand::NONE;
     stats->last_direction = SnakeDirection::RIGHT;
     stats->last_confidence = 0.0f;
-    stats->last_logits = {0.0f, 0.0f, 0.0f, 0.0f};
-    stats->last_probs = {0.0f, 0.0f, 0.0f, 0.0f};
+    stats->last_logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    stats->last_probs = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     stats->last_state = "running";
     stats->last_roi_mode = "center";
-    stats->last_norm_mode = "on";
+    stats->last_norm_mode = "off";
     stats->last_color_mode = "RGB";
     stats->last_map_mode = "raw";
     stats->window_begin = now;
@@ -1273,6 +1350,11 @@ int main() {
                                       &gesture_shape,
                                       GetGestureNormalizeEnabled(),
                                       GetGestureInputFormat());
+        if (!gesture_classifier.IsInitialized()) {
+            LOG_ERROR("companion gesture model initialization failed; path=%s\n",
+                      gesture_model_path.c_str());
+            return;
+        }
         companion_model_initialized = true;
         LOG_INFO("companion mode model initialized\n");
     };
@@ -1734,6 +1816,7 @@ int main() {
                     detections_original_coord.push_back(mapped);
                 }
             }
+            ApplyFireBrightnessFallback(img_sensor, crop_offset_x, &detections_original_coord);
             UpdateBestDetectionSummary(detections_original_coord,
                                        &perf_stats.last_best_class,
                                        &perf_stats.last_best_score,

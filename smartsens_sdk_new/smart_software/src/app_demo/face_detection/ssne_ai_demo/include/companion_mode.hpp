@@ -21,9 +21,9 @@ struct GestureResult {
     GestureCommand command = GestureCommand::NONE;
     bool valid = false;
     float confidence = 0.0f;
-    // Model output order: TU, TD, TL, TR.
-    std::array<float, 4> probabilities = {0.0f, 0.0f, 0.0f, 0.0f};
-    std::array<float, 4> logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    // Model output order: down, left, right, up, none.
+    std::array<float, 5> probabilities = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 5> logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
 };
 
 class GestureClassifier {
@@ -33,17 +33,20 @@ class GestureClassifier {
     void Initialize(std::string& model_path,
                     std::array<int, 2>* in_img_shape,
                     std::array<int, 2>* in_det_shape,
-                    bool use_normalize = true,
+                    bool use_normalize = false,
                     uint8_t input_format = SSNE_RGB);
     void Predict(ssne_tensor_t* img, GestureResult* result, float conf_threshold = 0.55f);
     void SetFocusBox(const std::array<float, 4>* focus_box);
     void Release();
+    // Model id 0 is valid on this SDK, so initialization cannot use it as a
+    // failure sentinel.
+    bool IsInitialized() const { return initialized && get_data(inputs[0]) != nullptr; }
 
     std::array<int, 2> img_shape = {0, 0};
     std::array<int, 2> det_shape = {0, 0};
     float w_scale = 1.0f;
     float h_scale = 1.0f;
-    bool normalize_enabled = true;
+    bool normalize_enabled = false;
     uint8_t input_format = SSNE_RGB;
 
   private:
@@ -51,6 +54,7 @@ class GestureClassifier {
     ssne_tensor_t inputs[1] = {};
     ssne_tensor_t outputs[1] = {};
     AiPreprocessPipe pipe_offline = GetAIPreprocessPipe();
+    bool initialized = false;
     bool focus_valid = false;
     std::array<float, 4> focus_box = {0.0f, 0.0f, 0.0f, 0.0f};
 };

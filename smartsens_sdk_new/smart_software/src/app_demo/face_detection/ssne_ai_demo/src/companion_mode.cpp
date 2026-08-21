@@ -320,7 +320,7 @@ void LogTensorFingerprint(const char* prefix, ssne_tensor_t tensor) {
 }
 
 void LogGestureOutputPreview(ssne_tensor_t tensor) {
-    if (!IsValidTensor(tensor) || get_total_size(tensor) < 4U) {
+    if (!IsValidTensor(tensor) || get_total_size(tensor) != 5U) {
         LOG_WARN("gesture output preview unavailable: invalid tensor or total=%u\n",
                  get_total_size(tensor));
         return;
@@ -336,34 +336,37 @@ void LogGestureOutputPreview(ssne_tensor_t tensor) {
 
     if (dtype == SSNE_FLOAT32) {
         const float* ptr = reinterpret_cast<const float*>(data);
-        LOG_INFO("gesture output preview: decode=float32 total=%u order=[TU,TD,TL,TR] logits4=[%.6f %.6f %.6f %.6f]\n",
+        LOG_INFO("gesture output preview: decode=float32 total=%u order=[down,left,right,up,none] logits5=[%.6f %.6f %.6f %.6f %.6f]\n",
                  total,
                  ptr[0],
                  ptr[1],
                  ptr[2],
-                 ptr[3]);
+                 ptr[3],
+                 ptr[4]);
         return;
     }
 
     if (dtype == SSNE_INT8) {
         const int8_t* ptr = reinterpret_cast<const int8_t*>(data);
-        LOG_INFO("gesture output preview: decode=int8_raw total=%u order=[TU,TD,TL,TR] logits4=[%d %d %d %d] note=check SDK quant scale if this is not float32\n",
+        LOG_INFO("gesture output preview: decode=int8_raw total=%u order=[down,left,right,up,none] logits5=[%d %d %d %d %d] note=check SDK quant scale if this is not float32\n",
                  total,
                  static_cast<int>(ptr[0]),
                  static_cast<int>(ptr[1]),
                  static_cast<int>(ptr[2]),
-                 static_cast<int>(ptr[3]));
+                 static_cast<int>(ptr[3]),
+                 static_cast<int>(ptr[4]));
         return;
     }
 
     if (dtype == SSNE_UINT8) {
         const uint8_t* ptr = reinterpret_cast<const uint8_t*>(data);
-        LOG_INFO("gesture output preview: decode=uint8_raw total=%u order=[TU,TD,TL,TR] logits4=[%u %u %u %u] note=check SDK quant scale/zero point if this is not float32\n",
+        LOG_INFO("gesture output preview: decode=uint8_raw total=%u order=[down,left,right,up,none] logits5=[%u %u %u %u %u] note=check SDK quant scale/zero point if this is not float32\n",
                  total,
                  static_cast<unsigned int>(ptr[0]),
                  static_cast<unsigned int>(ptr[1]),
                  static_cast<unsigned int>(ptr[2]),
-                 static_cast<unsigned int>(ptr[3]));
+                 static_cast<unsigned int>(ptr[3]),
+                 static_cast<unsigned int>(ptr[4]));
         return;
     }
 
@@ -507,12 +510,12 @@ bool CropYuv422Tensor(ssne_tensor_t input, const CropRoi& roi, ssne_tensor_t* cr
     return true;
 }
 
-bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) {
+bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 5>* values) {
     if (values == nullptr || !IsValidTensor(tensor)) {
         return false;
     }
 
-    if (get_total_size(tensor) < 4U) {
+    if (get_total_size(tensor) != 5U) {
         return false;
     }
 
@@ -522,7 +525,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             (*values)[static_cast<size_t>(i)] = ptr[i];
         }
         return true;
@@ -533,7 +536,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             (*values)[static_cast<size_t>(i)] = static_cast<float>(ptr[i]);
         }
         return true;
@@ -544,7 +547,7 @@ bool CopyOutputToFloatArray(ssne_tensor_t tensor, std::array<float, 4>* values) 
         if (ptr == nullptr) {
             return false;
         }
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             (*values)[static_cast<size_t>(i)] = static_cast<float>(ptr[i]);
         }
         return true;
@@ -625,16 +628,18 @@ float Sigmoid(float value) {
 }
 
 GestureCommand GestureClassIndexToCommand(int class_index) {
-    // Model output order is [TU, TD, TL, TR].
+    // Model output order is [down, left, right, up, none].
     switch (class_index) {
         case 0:
-            return GestureCommand::TU;
-        case 1:
             return GestureCommand::TD;
-        case 2:
+        case 1:
             return GestureCommand::TL;
-        case 3:
+        case 2:
             return GestureCommand::TR;
+        case 3:
+            return GestureCommand::TU;
+        case 4:
+            return GestureCommand::NONE;
         default:
             return GestureCommand::NONE;
     }
@@ -707,6 +712,7 @@ void GestureClassifier::Initialize(std::string& model_path,
                                    std::array<int, 2>* in_det_shape,
                                    bool use_normalize,
                                    uint8_t in_input_format) {
+    initialized = false;
     img_shape = *in_img_shape;
     det_shape = *in_det_shape;
     normalize_enabled = use_normalize;
@@ -740,6 +746,9 @@ void GestureClassifier::Initialize(std::string& model_path,
     if (!IsValidTensor(inputs[0])) {
         LOG_ERROR("gesture input tensor allocation failed for [%u x %u], mem=%zu\n",
                   det_width, det_height, get_mem_size(inputs[0]));
+        ReleaseAIPreprocessPipe(pipe_offline);
+        pipe_offline = AiPreprocessPipe{};
+        model_id = 0;
         return;
     }
 
@@ -766,6 +775,7 @@ void GestureClassifier::Initialize(std::string& model_path,
              SsneDataTypeName(dtype),
              dtype);
     LogTensorSummary("gesture input", inputs[0]);
+    initialized = true;
 }
 
 void GestureClassifier::SetFocusBox(const std::array<float, 4>* in_focus_box) {
@@ -936,20 +946,21 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
         logged_output_tensor = true;
     }
 
-    std::array<float, 4> logits = {0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 5> logits = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     if (!CopyOutputToFloatArray(outputs[0], &logits)) {
-        LOG_ERROR("gesture output decode failed: output[0] is not a 4-logit tensor\n");
+        LOG_ERROR("gesture output decode failed: expected exactly 5 values [down,left,right,up,none], actual_total=%u\n",
+                  get_total_size(outputs[0]));
         return;
     }
 
-    std::array<float, 4> scores = {0.0f, 0.0f, 0.0f, 0.0f};
-    for (int i = 0; i < 4; ++i) {
+    std::array<float, 5> scores = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    for (int i = 0; i < 5; ++i) {
         scores[static_cast<size_t>(i)] =
             Sigmoid(logits[static_cast<size_t>(i)]);
     }
 
     int best_index = 0;
-    for (int i = 1; i < 4; ++i) {
+    for (int i = 1; i < 5; ++i) {
         if (scores[static_cast<size_t>(i)] > scores[static_cast<size_t>(best_index)]) {
             best_index = i;
         }
@@ -958,7 +969,7 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
     result->logits = logits;
     result->probabilities = scores;
     result->confidence = scores[static_cast<size_t>(best_index)];
-    if (result->confidence < conf_threshold) {
+    if (best_index == 4 || result->confidence < conf_threshold) {
         result->command = GestureCommand::NONE;
         result->valid = false;
         return;
@@ -969,6 +980,7 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
 }
 
 void GestureClassifier::Release() {
+    initialized = false;
     release_tensor(inputs[0]);
     inputs[0] = ssne_tensor_t{};
     ReleaseOutputTensors(outputs, 1);

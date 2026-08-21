@@ -35,6 +35,7 @@ class StrangerModeRunner {
   std::string generic_face_model_path_;
   std::string last_error_;
   bool generic_face_ready_ = false;
+  int recognizer_init_status_ = 0;
   float last_similarity_ = 0.0f;
   int last_recognize_status_ = 0;
   bool last_instant_owner_ = false;

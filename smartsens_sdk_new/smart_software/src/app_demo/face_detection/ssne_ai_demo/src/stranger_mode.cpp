@@ -71,6 +71,7 @@ void StrangerModeRunner::Initialize(const std::string& model_path) {
   owner_template_path_ =
       std::string("/app_demo/app_assets/models/") +
       kStrangerFaceOwnerTemplateName;
+  recognizer_init_status_ = 0;
 
   a1face::RecognizerConfig config;
   config.vote.similarity_threshold = kVoteSimilarityThreshold;
@@ -87,6 +88,7 @@ void StrangerModeRunner::Initialize(const std::string& model_path) {
   const int init_ret =
       recognizer_.Initialize(model_path_.c_str(), owner_template_path_.c_str(),
                              config);
+  recognizer_init_status_ = init_ret;
   if (init_ret != 0) {
     last_error_ = "face recognizer init failed";
     LOG_ERROR("stranger mode recognizer init failed ret=%d model=%s owner=%s\n",
@@ -108,6 +110,7 @@ void StrangerModeRunner::Release() {
   generic_face_model_path_.clear();
   last_error_.clear();
   generic_face_ready_ = false;
+  recognizer_init_status_ = 0;
   last_similarity_ = 0.0f;
   last_recognize_status_ = 0;
   last_instant_owner_ = false;
@@ -165,9 +168,14 @@ int StrangerModeRunner::ProcessFrame(ssne_tensor_t* img, int crop_offset_x,
     return -3;
   }
   if (!recognizer_.IsInitialized()) {
-    last_error_ = "face recognizer is not initialized";
+    last_recognize_status_ = recognizer_init_status_ != 0
+                                 ? recognizer_init_status_
+                                 : -4;
+    if (last_error_.empty()) {
+      last_error_ = "face recognizer is not initialized";
+    }
     recognizer_.ResetVoting();
-    return -4;
+    return last_recognize_status_;
   }
 
   if (!generic_face_ready_) {
