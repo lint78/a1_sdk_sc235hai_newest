@@ -35,7 +35,7 @@ class GestureClassifier {
                     std::array<int, 2>* in_det_shape,
                     bool use_normalize = true,
                     uint8_t input_format = SSNE_RGB);
-    void Predict(ssne_tensor_t* img, GestureResult* result, float conf_threshold = 0.55f);
+    void Predict(ssne_tensor_t* img, GestureResult* result, float conf_threshold = 0.25f);
     void SetFocusBox(const std::array<float, 4>* focus_box);
     void Release();
     // Model id 0 is valid on this SDK, so initialization cannot use it as a

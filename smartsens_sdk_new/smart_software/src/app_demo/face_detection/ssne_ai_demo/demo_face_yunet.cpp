@@ -49,7 +49,8 @@ constexpr int kPoseForceInterval = 15;
 constexpr int kPoseAssistDetectFrames = 15;
 constexpr int kPoseVisualMaxHoldFrames = 15;
 constexpr float kPoseTrackScoreFloor = 0.50f;
-constexpr float kGestureConfThreshold = 0.38f;
+constexpr float kGestureConfThreshold = 0.25f;
+constexpr float kGestureNoneRejectThreshold = 0.50f;
 constexpr int kSnakeBoardCols = 20;
 constexpr int kSnakeBoardRows = 11;
 constexpr int kDetectNumClasses = 7;
@@ -700,8 +701,10 @@ GestureCommand MapGestureCommand(GestureCommand command, GestureMapMode mode) {
 
 GestureCommand GestureDisplayCommandFromScores(const GestureResult& result,
                                                float conf_threshold) {
+    // Reject only when the explicit none class is dominant enough. Otherwise
+    // choose the strongest direction among down/left/right/up.
     int best_index = 0;
-    for (int i = 1; i < 5; ++i) {
+    for (int i = 1; i < 4; ++i) {
         if (result.probabilities[static_cast<size_t>(i)] >
             result.probabilities[static_cast<size_t>(best_index)]) {
             best_index = i;
@@ -709,7 +712,8 @@ GestureCommand GestureDisplayCommandFromScores(const GestureResult& result,
     }
 
     const float best_score = result.probabilities[static_cast<size_t>(best_index)];
-    if (best_index == 4 || best_score < conf_threshold) {
+    if (result.probabilities[4] > kGestureNoneRejectThreshold ||
+        best_score < conf_threshold) {
         return GestureCommand::NONE;
     }
 
@@ -1172,7 +1176,7 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
 
     const double inv = 1.0 / static_cast<double>(stats->frames);
     const double fps = static_cast<double>(stats->frames) * 1000.0 / elapsed_ms;
-    LOG_INFO("serial mode=snake build=snake_gesture_test_v34 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=softmax_multiclass threshold=%.2f map=%s direct=%d display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[D %.3f L %.3f R %.3f U %.3f N %.3f] scores=[D %.3f L %.3f R %.3f U %.3f N %.3f] state=%s\n",
+    LOG_INFO("serial mode=snake build=snake_gesture_test_v35 fps=%.2f capture=%.2fms gesture=%.2fms game=%.2fms osd=%.2fms score=%d best=%d len=%d head=(%d,%d) food=(%d,%d) roi=%s norm=%s color=%s score_mode=softmax_multiclass threshold=%.2f none_reject=%.2f map=%s direct=%d display=%s raw=%s stable=%s held=%s applied=%s dir=%s conf=%.3f logits=[D %.3f L %.3f R %.3f U %.3f N %.3f] scores=[D %.3f L %.3f R %.3f U %.3f N %.3f] state=%s\n",
              fps,
              stats->capture_ms * inv,
              stats->gesture_ms * inv,
@@ -1189,6 +1193,7 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
               stats->last_norm_mode,
               stats->last_color_mode,
               kGestureConfThreshold,
+              kGestureNoneRejectThreshold,
               stats->last_map_mode,
               g_gesture_direct_test.load() ? 1 : 0,
               GestureCommandName(stats->last_command),

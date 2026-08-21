@@ -966,8 +966,12 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
     // head. Use one softmax over [down,left,right,up,none].
     const std::array<float, 5> scores = Softmax(logits);
 
+    // `none` is a rejection gate, while the four directions are the
+    // mutually-exclusive gesture candidates. Do not let a moderate `none`
+    // score suppress a direction unless it exceeds the explicit 0.5 gate.
+    constexpr float kNoneRejectThreshold = 0.50f;
     int best_index = 0;
-    for (int i = 1; i < 5; ++i) {
+    for (int i = 1; i < 4; ++i) {
         if (scores[static_cast<size_t>(i)] > scores[static_cast<size_t>(best_index)]) {
             best_index = i;
         }
@@ -976,7 +980,7 @@ void GestureClassifier::Predict(ssne_tensor_t* img, GestureResult* result, float
     result->logits = logits;
     result->probabilities = scores;
     result->confidence = scores[static_cast<size_t>(best_index)];
-    if (best_index == 4 || result->confidence < conf_threshold) {
+    if (scores[4] > kNoneRejectThreshold || result->confidence < conf_threshold) {
         result->command = GestureCommand::NONE;
         result->valid = false;
         return;
