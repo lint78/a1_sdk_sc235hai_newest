@@ -33,7 +33,7 @@ class GestureClassifier {
     void Initialize(std::string& model_path,
                     std::array<int, 2>* in_img_shape,
                     std::array<int, 2>* in_det_shape,
-                    bool use_normalize = false,
+                    bool use_normalize = true,
                     uint8_t input_format = SSNE_RGB);
     void Predict(ssne_tensor_t* img, GestureResult* result, float conf_threshold = 0.55f);
     void SetFocusBox(const std::array<float, 4>* focus_box);
@@ -46,7 +46,7 @@ class GestureClassifier {
     std::array<int, 2> det_shape = {0, 0};
     float w_scale = 1.0f;
     float h_scale = 1.0f;
-    bool normalize_enabled = false;
+    bool normalize_enabled = true;
     uint8_t input_format = SSNE_RGB;
 
   private:

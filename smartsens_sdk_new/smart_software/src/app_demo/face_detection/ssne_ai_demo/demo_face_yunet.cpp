@@ -811,8 +811,9 @@ std::atomic<int> g_forced_snake_command(static_cast<int>(GestureCommand::NONE));
 std::atomic<int> g_forced_snake_hold_frames(0);
 std::atomic<int> g_gesture_roi_mode(static_cast<int>(GestureRoiMode::CENTER));
 std::atomic<bool> g_gesture_roi_changed(false);
-// Preserve the existing board default; switch explicitly with the serial command.
-std::atomic<bool> g_gesture_normalize_enabled(false);
+// Match the gesture training input pipeline by default. The SDK reads the
+// model's configured ImageNet mean/std when SetNormalize is enabled.
+std::atomic<bool> g_gesture_normalize_enabled(true);
 std::atomic<int> g_gesture_input_format(SSNE_RGB);
 // Keep the diagnostic build in raw mode. Calibration can be enabled after
 // the raw model response changes correctly with all four gestures.
@@ -1232,7 +1233,7 @@ void FlushSnakePerfIfNeeded(SnakeLoopPerfStats* stats) {
     stats->last_probs = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
     stats->last_state = "running";
     stats->last_roi_mode = "center";
-    stats->last_norm_mode = "off";
+    stats->last_norm_mode = "on";
     stats->last_color_mode = "RGB";
     stats->last_map_mode = "raw";
     stats->window_begin = now;
